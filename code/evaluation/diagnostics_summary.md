@@ -54,5 +54,6 @@ Deletion-worker events (confidence:outcome):
 - Learned run cadence (s): [390, 449]
 - States by omission: 140; omission overrides: 1
 - States resting only on files captured after audit_at: 178
+- Completion guard: 8 cases not claimed COMPLETE ({'tie candidate': 10}); cases whose unattributed tie had every candidate proven compliant: 110
 - Catalog conflicts: 1; rejected catalog links: 0
 - Evidence: 94 files, problems: 0, observations: 2893

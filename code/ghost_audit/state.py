@@ -111,8 +111,11 @@ def audit_capture(system: str, scopes: list[Scope], audit_at: datetime, file_cap
 
 def reconstruct(resource_id: str, system: str, treatment: str, category: str, observations: list[Observation],
                 scopes: list[Scope], audit_at: datetime, file_captured: dict,
-                since: datetime | None = None) -> ResourceState:
-    usable = [o for o in observations if o.obs_time <= audit_at]
+                since: datetime | None = None, strict_capture: bool = False) -> ResourceState:
+    """strict_capture=True applies the literal cutoff to whole files: a statement is usable only if
+    its file's manifest captured_at is also <= audit_at (comparison mode; see evaluation report)."""
+    usable = [o for o in observations if o.obs_time <= audit_at and
+              (not strict_capture or (file_captured.get(o.file_id) and file_captured[o.file_id] <= audit_at))]
     judged = [(o, evaluate(o, treatment)) for o in usable]
     judged = [(o, v) for o, v in judged if v is not None]
     trail = [(o.file_id, file_captured.get(o.file_id), o.obs_time, o.kind, v) for o, v in judged]

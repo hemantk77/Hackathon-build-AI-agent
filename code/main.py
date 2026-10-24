@@ -33,6 +33,8 @@ def main(argv=None) -> int:
                         help="which link confidence classes may produce steps (default: %(default)s)")
     parser.add_argument("--use-bundle-order", action="store_true",
                         help="also break ties by record order inside snapshot bundles (weak, off by default)")
+    parser.add_argument("--strict-capture-cutoff", action="store_true",
+                        help="ignore files exported after audit_at even for linking/state (comparison mode)")
     parser.add_argument("--llm", action="store_true", help="enable optional Claude fallback (needs ANTHROPIC_API_KEY)")
     args = parser.parse_args(argv)
 
@@ -46,7 +48,7 @@ def main(argv=None) -> int:
 
     started = time.time()
     run = run_pipeline(Path(args.data_dir), args.requests, llm=llm, link_policy=args.link_policy,
-                       use_bundle_order=args.use_bundle_order)
+                       use_bundle_order=args.use_bundle_order, strict_capture_cutoff=args.strict_capture_cutoff)
     rows = [(r.case_id, r.status, r.steps) for r in run.results]
     write_output(Path(args.out), rows)
 
@@ -58,6 +60,10 @@ def main(argv=None) -> int:
     print(f"status counts: {dict(sorted(statuses.items()))}")
     print(f"evidence files: {cov['files']} parsed_ok={sum(cov['ok_by_type'].values())} "
           f"observations={cov['observations']} problems={len(cov['problems'])}")
+    for p in cov["problems"]:
+        hint = " (is rapidocr-onnxruntime installed? see code/requirements.txt)" if p["type"] == "png" else ""
+        print(f"WARNING: evidence {p['file_id']} ({p['path']}) {p['status']}: {p.get('notes', '')}{hint}",
+              file=sys.stderr)
     print(f"model calls: {len(run.llm_usage)}")
     summ = summary(run)
     print(f"link policy: {args.link_policy}; output steps on weak/unresolved links: "
@@ -69,7 +75,8 @@ def main(argv=None) -> int:
         usage_path = Path(__file__).resolve().parent / "evaluation" / "last_run_usage.json"
         usage_path.write_text(json.dumps({
             "requests_file": args.requests, "cases": len(rows), "llm_enabled": llm is not None,
-            "link_policy": args.link_policy, "model_calls": len(run.llm_usage),
+            "link_policy": args.link_policy, "strict_capture_cutoff": args.strict_capture_cutoff,
+            "model_calls": len(run.llm_usage),
             "per_model": estimate_cost(run.llm_usage), "calls": run.llm_usage,
         }, indent=2), encoding="utf-8")
     if args.diagnostics:

@@ -8,7 +8,7 @@ from .config import OPERATIONS, TREATMENT_OPS
 from .linker import CONFIDENCE_RANK, CaseContext, Link
 from .output import order_steps
 from .policy import Policy
-from .state import ResourceState, category_of, reconstruct
+from .state import ResourceState, category_of, evaluate, reconstruct
 
 
 @dataclass
@@ -33,51 +33,90 @@ def _iso(value):
 
 
 class Planner:
-    def __init__(self, policy: Policy, obs_by_resource: dict, scopes: list, file_captured: dict):
+    def __init__(self, policy: Policy, obs_by_resource: dict, scopes: list, file_captured: dict,
+                 strict_capture: bool = False):
         self.policy = policy
         self.obs_by_resource = obs_by_resource
         self.scopes = scopes
         self.file_captured = file_captured
+        self.strict_capture = strict_capture
 
-    def assess(self, case: CaseContext, links: dict[str, Link]) -> CaseResult:
+    def _state(self, rid: str, system: str, case: CaseContext):
+        observations = self.obs_by_resource.get(rid, [])
+        if self.strict_capture:
+            observations = [o for o in observations if self.file_captured.get(o.file_id)
+                            and self.file_captured[o.file_id] <= case.audit_at]
+        category = category_of(observations, system)
+        latest_flags = {}
+        for o in observations:
+            if o.obs_time <= case.audit_at:
+                latest_flags.update(o.flags)
+        decision = self.policy.decide(category, latest_flags, case.audit_at)
+        state = reconstruct(rid, system, decision.treatment, category, observations, self.scopes,
+                            case.audit_at, self.file_captured, since=case.reported_at,
+                            strict_capture=self.strict_capture)
+        return decision, state
+
+    def assess(self, case: CaseContext, links: dict[str, Link], tie_candidates: list | None = None) -> CaseResult:
+        """tie_candidates: (resource_id, system) of every record in an unresolved tie this request is
+        part of. They are never written as steps, but COMPLETE is claimed only if all of them are
+        proven compliant (then the requester's record is compliant whichever candidate it is)."""
         if not case.authorized:
             return CaseResult(case.case_id, "NOT_APPLICABLE", [], notes=["request does not authorize deletion"])
         states: list[tuple[Link, object, ResourceState]] = []
         for rid, link in sorted(links.items()):
-            observations = self.obs_by_resource.get(rid, [])
-            category = category_of(observations, link.system)
-            latest_flags = {}
-            for o in observations:
-                if o.obs_time <= case.audit_at:
-                    latest_flags.update(o.flags)
-            decision = self.policy.decide(category, latest_flags, case.audit_at)
-            state = reconstruct(rid, link.system, decision.treatment, category, observations, self.scopes,
-                                case.audit_at, self.file_captured, since=case.reported_at)
+            decision, state = self._state(rid, link.system, case)
             states.append((link, decision, state))
 
-        violations = [(l, d, s) for l, d, s in states if s.compliant is False]
-        steps = []
         notes = []
-        if violations:
+        # A violation becomes a finding only if a file captured <= audit_at shows the violation itself.
+        violations, uncitable = [], []
+        for link, decision, state in states:
+            if state.compliant is not False:
+                continue
+            evidence = state.citation or self._fallback_evidence(link, decision.treatment, case.audit_at)
+            (violations if evidence else uncitable).append((link, decision, state, evidence))
+        # Completion is not established while a relevant record is unaccounted for.
+        blockers = [f"{l.resource_id}: violation visible only in evidence captured after audit_at"
+                    for l, _, _, _ in uncitable]
+        for link, decision, state in states:
+            if state.compliant is None and CONFIDENCE_RANK[link.confidence] >= CONFIDENCE_RANK["strong"]:
+                blockers.append(f"{link.resource_id}: state at audit_at unknown")
+        tie_states = []
+        for rid, system in tie_candidates or []:
+            _, st = self._state(rid, system, case)
+            tie_states.append((rid, st.compliant))
+            if st.compliant is not True:
+                blockers.append(f"{rid}: tie candidate (possibly the requester's) not proven compliant")
+        if tie_states and all(v is True for _, v in tie_states):
+            notes.append(f"unattributed tie: all {len(tie_states)} candidate records proven compliant "
+                         f"({', '.join(sorted(r for r, _ in tie_states))}); none asserted")
+
+        steps = []
+        if violations or blockers:
+            # The schema has no UNKNOWN status: a case whose completion cannot be established is
+            # INCOMPLETE. Only evidenced violations become findings; nothing is invented to fill gaps.
             status = "INCOMPLETE"
-            for link, decision, state in violations:
+            for link, decision, state, evidence in violations:
                 finding, remediation, _ = TREATMENT_OPS[decision.treatment]
                 if finding:
-                    evidence = state.citation or self._fallback_evidence(link, case.audit_at)
-                    if not evidence:
-                        notes.append(f"{link.resource_id}: violation seen only in evidence captured after audit_at")
                     steps.append(_step(finding, link.system, link.resource_id, evidence))
                 if remediation:
                     steps.append(_step(remediation, link.system, link.resource_id, ""))
             for link, decision, state in states:
                 verify = TREATMENT_OPS[decision.treatment][2]
                 steps.append(_step(verify, link.system, link.resource_id, ""))
-            weakest_needed = max((l.confidence for l, _, _ in violations), key=lambda c: CONFIDENCE_RANK[c])
+            notes.extend(f"completion not established: {b}" for b in blockers)
+            if violations:
+                weakest_needed = max((l.confidence for l, _, _, _ in violations), key=lambda c: CONFIDENCE_RANK[c])
+            else:
+                weakest_needed = "unestablished"
         else:
             status = "COMPLETE"
             for link, decision, state in states:
                 if state.compliant is None or not state.citation:
-                    notes.append(f"{link.resource_id}: no citable evidence of final state; omitted from verification")
+                    notes.append(f"{link.resource_id} ({link.confidence} link): no citable evidence of final "
+                                 f"state; omitted from verification")
                     continue
                 verify = TREATMENT_OPS[decision.treatment][2]
                 if state.present is False and decision.treatment in ("REDACT", "ANONYMIZE"):
@@ -113,9 +152,10 @@ class Planner:
             },
         }
 
-    def _fallback_evidence(self, link: Link, audit_at) -> str:
-        """Latest citable (captured <= audit_at) evidence that mentions the record at all."""
+    def _fallback_evidence(self, link: Link, treatment: str, audit_at) -> str:
+        """Latest file captured <= audit_at whose own statement shows the violation (not merely a
+        mention of the record)."""
         citable = [o for o in self.obs_by_resource.get(link.resource_id, [])
                    if o.obs_time <= audit_at and self.file_captured.get(o.file_id)
-                   and self.file_captured[o.file_id] <= audit_at and o.present]
+                   and self.file_captured[o.file_id] <= audit_at and evaluate(o, treatment) is False]
         return citable[-1].file_id if citable else ""

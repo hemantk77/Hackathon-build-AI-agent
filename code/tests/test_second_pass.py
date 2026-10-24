@@ -29,6 +29,12 @@ CUSTOM = CODE / "evaluation" / "custom_cases"
 UTC = timezone.utc
 
 
+def setUpModule():
+    from test_final_review import ensure_fixture_rules
+
+    ensure_fixture_rules()  # fixtures use the challenge's deletion_rules.csv, which is not packaged
+
+
 class TimestampTests(unittest.TestCase):
     def test_formats_and_offsets(self):
         self.assertEqual(parse_ts("2026-09-15T12:00:00Z"), datetime(2026, 9, 15, 12, tzinfo=UTC))
@@ -180,8 +186,8 @@ class ScreenshotIndicatorTests(unittest.TestCase):
         self.assertIs(blocked["backup_1"].flags.get("restore_allowed"), False)
 
     def test_glued_ocr_identifiers_are_split(self):
-        obs = self._obs("user_20-analytics_7438-darwish.omar@icloud.com")
-        self.assertIn("email:darwish.omar@icloud.com", obs["analytics_7438"].flags["row_identifiers"])
+        obs = self._obs("user_2-analytics_71-test.person@example.org")
+        self.assertIn("email:test.person@example.org", obs["analytics_71"].flags["row_identifiers"])
 
 
 class PipelineRegressionTests(unittest.TestCase):
@@ -194,23 +200,23 @@ class PipelineRegressionTests(unittest.TestCase):
         res = self.by_case["case_63"]
         link = next(r for r in res.resources if r["resource_id"] == "marketing_001")
         self.assertEqual(link["link"]["method"], "catalog")
-        self.assertTrue(any("sj.park@naver.com" in c and "no known customer" in c for c in link["link"]["conflicts"]))
+        self.assertTrue(any("evidence_60" in c and "no known customer" in c for c in link["link"]["conflicts"]))
 
     def test_status_never_depends_on_weak_or_unresolved_links(self):
         self.assertTrue(all(r.status_relies_on == "direct" for r in self.full.results if r.status != "NOT_APPLICABLE"))
 
     def test_ties_are_labelled_unresolved_with_all_candidates(self):
-        res = run_pipeline(CUSTOM / "suite_ambiguous" / "dataset", link_policy="full")
+        res = run_pipeline(CUSTOM / "suite_ambiguous" / "data", link_policy="full")
         accounts = [r for x in res.results for r in x.resources if r["resource_id"].startswith("account_")]
         self.assertEqual(len(accounts), 2)
         for r in accounts:
             self.assertEqual(r["link"]["confidence"], "unresolved")
             self.assertEqual(sorted(r["link"]["candidates"]), ["cust_11", "cust_12"])
-        default = run_pipeline(CUSTOM / "suite_ambiguous" / "dataset")
+        default = run_pipeline(CUSTOM / "suite_ambiguous" / "data")
         self.assertFalse(any(r["resource_id"].startswith("account_") for x in default.results for r in x.resources))
 
     def test_false_catalog_join_is_rejected(self):
-        res = run_pipeline(CUSTOM / "suite" / "dataset")
+        res = run_pipeline(CUSTOM / "suite" / "data")
         case = next(r for r in res.results if r.case_id == "cust_06")
         self.assertEqual(case.status, "COMPLETE")
         self.assertFalse(any(r["resource_id"] == "support_9601" for r in case.resources))

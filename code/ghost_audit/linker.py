@@ -105,10 +105,13 @@ WINDOWS = {  # hours relative to reported_at
 
 class Linker:
     def __init__(self, cases: list[CaseContext], evidence: EvidenceIndex, identity: IdentityIndex,
-                 activity: ActivityIndex, use_bundle_order: bool = False):
+                 activity: ActivityIndex, use_bundle_order: bool = False, strict_capture: bool = False):
         # Bundle record order is the weakest resolver (an ordering artifact with no public-sample
         # support), so it is opt-in; without it those ties stay recorded as ambiguous.
         self.use_bundle_order = use_bundle_order
+        # strict_capture: a request may only use files whose manifest captured_at <= its audit_at
+        # (and activity rows timed <= audit_at), for identity and ownership as well as state.
+        self.strict_capture = strict_capture
         self.cases = cases
         self.by_case = {c.case_id: c for c in cases}
         self.evidence = evidence
@@ -123,6 +126,7 @@ class Linker:
         for lst in self.obs_by_resource.values():
             lst.sort(key=lambda o: (o.obs_time, o.captured_at, o.file_id, o.position))
         self.owners = self._all_time_owners()
+        self.owner_trail = self._owner_trail() if strict_capture else {}
         self.links: dict[str, dict[str, Link]] = {c.case_id: {} for c in cases}
         self.diagnostics: list[dict] = []
         self.event_log: dict[str, dict] = {}  # activity_id -> candidate trail and outcome
@@ -223,6 +227,27 @@ class Linker:
             owners[link.resource_id] |= self.identity.owners_of(self._strong(link.keys))
         return owners
 
+    def _owner_trail(self) -> dict[str, list]:
+        trail = defaultdict(list)  # rid -> [(time available, owners)]
+        for o in self.all_observations:
+            owners = self.identity.owners_of(self._strong(o.link_keys))
+            if owners:
+                trail[o.resource_id].append((max(o.captured_at, o.obs_time), owners))
+        for link in self.activity.links:
+            owners = self.identity.owners_of(self._strong(link.keys))
+            if owners:
+                trail[link.resource_id].append((link.time, owners))
+        return trail
+
+    def owners_known(self, rid: str, at: datetime) -> set:
+        """Subjects a record is tied to by identifiers available at `at` (all time if not strict)."""
+        if not self.strict_capture:
+            return self.owners.get(rid, set())
+        return set().union(*[o for t, o in self.owner_trail.get(rid, []) if t <= at])
+
+    def _available(self, o: Observation, case: CaseContext) -> bool:
+        return not self.strict_capture or o.captured_at <= case.audit_at
+
     def _add(self, case: CaseContext, rid: str, basis: str, detail: str, confidence: str = "direct",
              method: str = "", candidates: list | None = None, conflicts: list | None = None):
         system = system_for_resource(rid) or ""
@@ -270,7 +295,7 @@ class Linker:
             keys = self._strong(case.keys)
             lo, hi = case.requested_at, case.audit_at
             for o in self.all_observations:
-                if lo <= o.obs_time <= hi and o.link_keys & keys:
+                if lo <= o.obs_time <= hi and o.link_keys & keys and self._available(o, case):
                     basis = "document" if o.kind == "document" else "evidence"
                     self._add(case, o.resource_id, basis, o.file_id, "direct", f"{basis}:identifier")
             for link in self.activity.links:
@@ -337,14 +362,17 @@ class Linker:
                 "resource_id": a.resource_id, "kind": kind, "time": a.time.isoformat(), "result": a.result,
                 "slot_candidates": [c.case_id for c in slot], "result_candidates": [c.case_id for c in cands],
                 "filters": [], "assigned_to": None, "confidence": None, "method": None})
-            owners = self.owners.get(a.resource_id, set())
-            if owners:
-                owned = [c for c in cands if c.subject.user_id in owners]
-                for c in owned:
-                    self._add(c, a.resource_id, "workflow", a.activity_id, "direct", "identifier+slot")
-                log.update(assigned_to=[c.case_id for c in owned] or None, confidence="direct",
-                           method="owned_by_identifier" if owned else "owned_by_other_subject")
-                continue  # belongs to an identified subject: never give it to someone else
+            known = {c.case_id: self.owners_known(a.resource_id, c.audit_at) for c in cands}
+            if any(known.values()) if self.strict_capture else self.owners.get(a.resource_id):
+                owned = [c for c in cands if c.subject.user_id in known[c.case_id]]
+                blind = [c for c in cands if not known[c.case_id]]  # strict mode only
+                if owned or not blind:
+                    for c in owned:
+                        self._add(c, a.resource_id, "workflow", a.activity_id, "direct", "identifier+slot")
+                    log.update(assigned_to=[c.case_id for c in owned] or None, confidence="direct",
+                               method="owned_by_identifier" if owned else "owned_by_other_subject")
+                    continue  # belongs to an identified subject: never give it to someone else
+                cands = blind
             if any(a.resource_id in self.links[c.case_id] for c in cands):
                 continue
             pending.append((a, kind, cands))
@@ -427,7 +455,8 @@ class Linker:
             aid = a.activity_id
             seen = self.obs_by_resource.get(a.resource_id, [])
             cs = narrow(aid, "observed_within_request_window", cs,
-                        [c for c in cs if any(c.requested_at <= o.obs_time <= c.audit_at for o in seen)])
+                        [c for c in cs if any(c.requested_at <= o.obs_time <= c.audit_at and self._available(o, c)
+                                              for o in seen)])
             cs = narrow(aid, "in_audit_capture", cs,
                         [c for c in cs if any(c.audit_at - 30 * HOUR <= o.captured_at <= c.audit_at for o in seen)])
             if kind == "success" and self.cadence:
@@ -543,6 +572,20 @@ class Linker:
                     continue
                 self.event_log[a.activity_id]["filters"].append({"evidence_coverage": [c.case_id]})
                 record(a, c, "weak", method_of(a.activity_id), cases)
+
+    def tie_candidates(self) -> dict[str, set]:
+        """case_id -> {(resource_id, system)} of every record in an unbroken tie the request is part of."""
+        out = defaultdict(set)
+        for links in self.links.values():
+            for rid, link in links.items():
+                if link.confidence == "unresolved":
+                    for c in link.candidates:
+                        out[c].add((rid, link.system))
+        for e in self.event_log.values():
+            if e.get("method") == "unassigned_ambiguous":
+                for c in e.get("unresolved_candidates", []):
+                    out[c].add((e["resource_id"], system_for_resource(e["resource_id"]) or ""))
+        return out
 
     def run(self) -> dict[str, dict[str, Link]]:
         self.link_direct()

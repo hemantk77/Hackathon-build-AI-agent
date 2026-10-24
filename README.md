@@ -20,7 +20,7 @@ The production pipeline is **deterministic Python**: the final full run made **0
 From the repository root:
 
 ```bash
-python -m pip install -r code/requirements.txt   # only pypdf is required for a normal run
+python -m pip install -r code/requirements.txt   # pypdf + RapidOCR (all required, pinned)
 python code/main.py                               # writes ./output.csv (518 rows)
 python code/validate_output.py                    # independent contract validator
 python code/evaluation/main.py                    # score the 32 public samples
@@ -30,9 +30,16 @@ python -m unittest discover -s code/tests         # unit tests
 
 Requirements:
 
-- Python 3.10 or newer.
-- No network access and no API keys for the default run.
-- A full run takes about 2 seconds.
+- Python 3.11 or newer. The pinned versions in `code/requirements.txt` were verified on Python 3.13 (Windows, CPU).
+- Put the supplied challenge `dataset/` folder at the repository root, or pass `--data-dir`. `code.zip` does not contain it.
+- Runtime dependencies:
+  - `pypdf` reads the PDF evidence.
+  - `rapidocr-onnxruntime` (with `onnxruntime`, `opencv-python` and `numpy`) reads the screenshot evidence. Its OCR models ship inside the wheel.
+  - All are required. If OCR is missing, the run prints a `WARNING` for each unreadable screenshot, and the affected steps are lost.
+- No network access and no API keys are needed at run time.
+- The first run OCRs the 11 screenshots (about 45 seconds on a laptop CPU) and caches the text in `code/ghost_audit/evidence_cache/`. Later runs take about 2 seconds.
+  - That cache is derived from the challenge evidence, so it is never packaged.
+- The output was reproduced byte-for-byte from `code.zip` in a fresh virtual environment, with the dataset supplied separately and no cache present; see the evaluation report.
 
 Useful flags:
 
@@ -43,10 +50,11 @@ Useful flags:
 | `python code/main.py --summary summary.md` | Run summary: link confidence counts, share of steps on heuristics, workflow-event outcomes, omission/late-file states, catalog conflicts, coverage |
 | `python code/main.py --link-policy {no-guess,full,corroborated}` | Which link confidence classes may produce steps. Default `no-guess` never asserts a genuine tie; `full` also pairs ties deterministically; `corroborated` keeps only direct and strong links |
 | `python code/main.py --use-bundle-order` | Also break ties by record order inside snapshot bundles (weak; off by default) |
+| `python code/main.py --strict-capture-cutoff` | Comparison mode: ignore every file whose manifest `captured_at` is after `audit_at`, even for linking and state (see "State at `audit_at`") |
 | `python code/main.py --data-dir <dir>` | Run against another dataset with the same layout (used by the custom suites) |
 | `python code/evaluation/main.py --verbose` | Per-case missing/extra steps against the reference answers |
 | `python code/evaluation/custom_cases/build_custom_cases.py` | Rebuild the custom adversarial fixtures |
-| `python code/package_submission.py` | Build `code.zip` (excludes `dataset/`, caches, secrets, nested archives) |
+| `python code/package_submission.py [--out path]` | Build `code.zip`. Excludes `dataset/`, the OCR cache and every other cache, any file byte-identical to a dataset file, secrets and nested archives. Refuses to build if a shipped file contains a dataset identifier |
 
 ---
 
@@ -76,10 +84,11 @@ code/
     output.py                grader ordering (phase, operation table order, system_id, resource_id) and CSV
     diagnostics.py           per-case diagnostics and the run summary (kept outside output.csv)
     llm.py, prompts.md       optional Claude fallback (off by default)
-  tests/                     31 unit tests (test_components.py, test_second_pass.py)
+  tests/                     43 unit tests (test_components.py, test_second_pass.py, test_final_review.py)
   evaluation/
     main.py                  scorer (status, exact-case, step P/R/F1, field, sequence, LCS)
-    custom_cases/            12 hand-labelled cases in two suites (+ builder script)
+    custom_cases/            14 hand-labelled synthetic cases in three suites (+ builder script; the
+                             challenge's deletion_rules.csv is copied in from dataset/ at run time)
     evaluation_report.md     metrics, mismatch analysis, ambiguity audit, assumptions, failures and fixes
     usage_report.md          model and token usage of the final run
     diagnostics_summary.md   generated summary of the final run
@@ -122,7 +131,10 @@ code/
    - At one snapshot instant, any surviving replica copy is a violation (replication drift).
    - Absence by omission is accepted only from snapshot captures, never from query-style lookups. A capture may override an explicit "present" only when it was taken for this audit (within 30h).
    - Later evidence (for example an account recreated after the audit) never changes the answer.
-   - A line timestamped before the cutoff inside a file exported after it may link records and inform state, but is never cited.
+   - **Cutoff interpretation.** A statement timestamped at or before `audit_at` inside a file exported after it may link records and inform state, but it is never cited. Statements timestamped after `audit_at` are always ignored.
+     - This is the narrowest reading consistent with the published examples. Seven of the 32 public answers include a record whose attribution depends on pre-cutoff statements in two such late exports, directly or through a tie-break: `evidence_02` for case_21, 24, 25, 26, 29 and 30, and `evidence_06` for case_09.
+     - The literal whole-file reading is available as `--strict-capture-cutoff`. It drops exact-case accuracy on the public sample from 0.875 to 0.656.
+     - On the 518 eval cases, the strict reading changes 126 cases and 2 statuses.
 
 6. **Policy.** Categories map to `deletion_rules.csv`:
 
@@ -138,6 +150,13 @@ code/
 7. **Plan.**
    - `INCOMPLETE`: findings that cite the latest evidence file captured at or before `audit_at`, then remediation, then verification of the final state of **every** relevant record (remediation and verification have an empty `evidence_id`).
    - `COMPLETE`: verification steps only, each citing the evidence that proves the state.
+   - **Completion guard.** The schema has no `UNKNOWN` status. A case with no evidenced violation is still reported `INCOMPLETE` (with only the checks that must pass, and no invented finding) when any of these holds:
+     - a directly or strongly linked record's state at `audit_at` is unknown;
+     - a violation is visible only in a file captured after `audit_at`;
+     - an unattributed tie that the request is part of contains a record that is not proven compliant.
+
+     It changes no public or eval answer under any link policy. It does prevent the false `COMPLETE` in the `suite_guard` fixtures.
+   - A finding cites a file only when that file's own statement shows the violation; a mere mention of the record is not enough.
    - Steps are sorted by phase → operation-table order → `system_id` → `resource_id`, then renumbered from 1.
 
    The grader's sort already places `DISABLE_DATA_FLOW` and `BLOCK_RESTORE` before any record change, so dependency order and the serialized order never conflict.
@@ -151,7 +170,8 @@ code/
 | Public sample (32), default `no-guess` | 1.000 | 0.875 | 1.000 / 0.979 / 0.990 | 0.958 | 0.875 |
 | Public sample (32), `--link-policy full` | 1.000 | 0.875 | 0.995 / 0.979 / 0.987 | 0.968 | 0.875 |
 | Public sample, first-pass baseline | 1.000 | 0.844 | 0.990 / 0.974 / 0.982 | 0.967 | 0.844 |
-| Custom suites (12 hand-labelled cases) | 1.000 | 1.000 | 1.000 / 1.000 / 1.000 | 1.000 | 1.000 |
+| Public sample (32), `--strict-capture-cutoff` (comparison only) | 1.000 | 0.656 | 1.000 / 0.928 / 0.962 | 0.860 | 0.656 |
+| Custom suites (14 hand-labelled synthetic cases) | 1.000 | 1.000 | 1.000 / 1.000 / 1.000 | 1.000 | 1.000 |
 
 Full 518-case output:
 - passes the independent validator and is byte-identical across runs;
@@ -172,7 +192,7 @@ In the final run every request was classified confidently, so no call was made. 
 - **Genuine ties.** 97 account events and 24 analytics events in the eval set cannot be attributed: same slot, same result, no identifiers. Seven more are unassignable.
   - Under the default, these are not asserted, and each affected case lacks one verification step.
   - `--link-policy full` pairs them deterministically, which is right about 33–50% of the time per tie.
-- **OCR.** Screenshot evidence relies on OCR. The text cache for the supplied images is shipped and was checked against the catalog rows and by visual inspection.
+- **OCR.** Screenshot evidence relies on OCR. With the pinned versions the OCR text was checked against the catalog rows and by visual inspection, and a clean install reproduces it exactly. Other OCR versions were not verified.
 - **case_63.** The data catalog links `marketing_001` to the requester, but the screenshot shows an unknown person's identifiers. The uncontradicted catalog link is kept and flagged; this needs manual review.
 
 ## Challenge links

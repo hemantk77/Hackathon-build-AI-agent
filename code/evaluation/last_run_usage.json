@@ -3,6 +3,7 @@
   "cases": 518,
   "llm_enabled": false,
   "link_policy": "no-guess",
+  "strict_capture_cutoff": false,
   "model_calls": 0,
   "per_model": {},
   "calls": []

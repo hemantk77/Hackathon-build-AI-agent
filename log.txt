@@ -761,3 +761,221 @@ branch=unknown (not a git repository)
 repo_root=C:\Users\heman\Dropbox\PC\Desktop\Programming 19\Hackathon-build-AI-agent
 worktree=main
 parent_agent=none
+
+## [2026-10-24T20:54:19Z] Compare no-guess and full link policies before final choice
+
+User Prompt (verbatim, secrets redacted):
+Before choosing the final link policy, evaluate both `no-guess` and `full` as separate candidate outputs.
+
+1. Preserve the current validated `output.csv` as the baseline. Do not overwrite it until the comparison is complete.
+2. Generate two candidate outputs using the same dataset, codebase, and evaluation environment. Change only the resource-linking policy.
+3. Compare both outputs against `dataset/sample_output.csv`, reporting status accuracy, exact-case accuracy, step precision, recall, F1, field accuracy, and sequence accuracy.
+4. List every public case that changes between the policies, including missing steps, extra steps, incorrect resource IDs, and evidence-reference differences.
+5. Quantify how many steps in each candidate depend on direct evidence, corroborated inference, or unresolved ambiguity.
+6. Do not count an unresolved link as correct merely because a global assignment algorithm selects it. Do not invent evidence to support a link.
+7. Explain whether the full policy's additional recall is supported by the available evidence and whether it creates false positives on the public or custom test cases.
+8. Keep the production logic generalisable. Do not hardcode sample case IDs or expected answers.
+9. Recommend the policy based on the measured results, the official scoring contract, and the risk of false findings. Explain remaining uncertainty.
+10. After the comparison, wait for my choice before changing the final submission policy, regenerating the final artifacts, or packaging the submission.
+
+The aim is to maximise actual scoring performance without presenting guesses as established facts.
+
+Agent Response Summary:
+Generated both candidates from the packaged code in a scratch directory with only --link-policy changed. The repo output.csv (dd65f880...), code.zip (4a35a0ad...) and usage record were left untouched; the no-guess candidate is byte-identical to the submitted output.
+Results:
+- Public sample: no-guess has precision 1.0000, F1 0.9895, field 0.9578; full has precision 0.9947, F1 0.9869, field 0.9682. Status, exact-case and sequence are equal.
+- Only case_23 differs, and full's guess there (account_7015 instead of account_410) is wrong.
+- On the eval set, full adds 121 unresolved verification steps (no findings, 0 status changes); 55 of them cite evidence in COMPLETE cases.
+- At most about 47% of the guesses can be right, below the 49.5% F1 break-even.
+Recommended keeping no-guess; awaiting the user's choice with no artifact changes.
+
+Actions:
+* Extracted code.zip to scratchpad and verified it matches repo code; generated eval and sample candidates for no-guess and full with diagnostics
+* Ran validate_output.py on both eval candidates; scored samples and both custom suites under each policy
+* Computed per-case public diffs, step counts by link confidence, tie-group sizes and expected guess accuracy
+* Appended this entry to log.txt (no submission artifacts changed)
+
+Context:
+tool=Claude Code
+model=claude-opus-5-5
+branch=unknown (not a git repository)
+repo_root=C:\Users\heman\Dropbox\PC\Desktop\Programming 19\Hackathon-build-AI-agent
+worktree=main
+parent_agent=none
+
+## [2026-10-24T20:57:34Z] Final decision: keep no-guess link policy
+
+User Prompt (verbatim, secrets redacted):
+Keep no-guess as the final submission policy; no regeneration needed.
+
+Agent Response Summary:
+Recorded the user's final decision to submit with the no-guess link policy. No regeneration or repackaging was done. Re-verified that output.csv (SHA-256 dd65f880...) is unchanged and passes the validator, and that code.zip (SHA-256 4a35a0ad...) records link_policy no-guess.
+
+Actions:
+* Ran sha256sum on output.csv and code.zip; ran python code/validate_output.py; read last_run_usage.json inside code.zip
+* Appended this entry to log.txt
+
+Context:
+tool=Claude Code
+model=claude-opus-5-5
+branch=unknown (not a git repository)
+repo_root=C:\Users\heman\Dropbox\PC\Desktop\Programming 19\Hackathon-build-AI-agent
+worktree=main
+parent_agent=none
+
+## [2026-10-24T21:30:35Z] Final forensic review: completion guard, cutoff audit, packaging fix
+
+User Prompt (verbatim, secrets redacted):
+Final Forensic Review — Fix the Remaining Risks Before Submission
+I have reviewed the latest `output.csv`, `code.zip`, evaluation report, and diagnostics. The current output is structurally valid, and the current default link policy is `no-guess`.
+Do not rewrite the implementation from scratch. Preserve the current output, source code, and test results as a baseline. Do not overwrite the final artifacts until changes have been evaluated.
+Your task is to resolve the following issues before declaring the submission ready.
+1. Preserve the no-guess policy unless evidence justifies a change
+The measured public-sample results are:
+
+* `no-guess`: exact-case accuracy 0.875, step precision 1.000, recall 0.9793, F1 0.9895.
+* `full`: exact-case accuracy 0.875, step precision 0.9947, recall 0.9793, F1 0.9869.
+* `corroborated`: exact-case accuracy 0.3438, step F1 0.9337.
+
+Keep `no-guess` as the default while investigating the remaining issues.
+Do not confuse unresolved ties with weak inferences. The diagnostics show 215 output steps based on weak heuristics across 203 cases. Quantify which cases and steps depend on each heuristic and explain its evidence basis.
+Do not switch to `full` just to increase the number of steps. Do not present unsupported associations as facts.
+2. Fix the archive's inclusion of evidence-derived OCR caches
+The uploaded archive contains 11 files under:
+`code/ghost_audit/evidence_cache/`
+These are extracted text from the supplied challenge screenshots. The README and packaging instructions say caches and challenge data should be excluded, but the current `code/package_submission.py` does not exclude `evidence_cache`.
+Correct the packaging implementation so the final `code.zip` contains no screenshot OCR caches or other data-derived files from the supplied challenge dataset.
+Ensure the solution remains reproducible:
+
+* Installable runtime dependencies must be declared correctly.
+* OCR must work in a clean environment with the supplied dataset present.
+* Update the README so its dependency instructions match the actual runtime requirements.
+* Run the package smoke test with the required dependencies installed.
+* Inspect the final archive and demonstrate that no challenge dataset, OCR cache, secrets, or prohibited artifacts are included.
+
+Keep custom synthetic evaluation fixtures that are necessary for the test suite, provided they contain no copied challenge evidence or hidden labels.
+3. Audit the COMPLETE decision when resource state is unknown
+Inspect `code/ghost_audit/planner.py`, especially the logic that chooses `COMPLETE` when `violations` is empty.
+The current logic can mark a case COMPLETE when a linked resource has `compliant is None` or lacks a citable verification record. It may simply omit that resource from the verification steps.
+This must be investigated against the explicit rule that deletion is COMPLETE only when every relevant copy has received the required treatment, retained records remain available, and recreation risks have been addressed.
+Run diagnostics on the full 518-case dataset and report:
+
+* The number of linked resources with unknown state.
+* The number of COMPLETE cases with any unknown resource state.
+* The number of COMPLETE cases missing verification for a relevant linked resource.
+* The number of INCOMPLETE cases with a known violation but no valid finding evidence.
+* The output impact of treating unresolved compliance as a reason not to claim COMPLETE.
+
+Do not invent findings or resource IDs to fill missing information. The contract has no UNKNOWN status or uncertainty operation, so document the schema limitation explicitly.
+Choose the most defensible contract-compliant behavior. Compare the public sample and custom-suite results before and after changing it. Do not conceal a false-completion risk merely to preserve an attractive metric.
+4. Reconcile evidence timestamps with the official cutoff rule
+The current `state.py` filters observations by their internal observation time but permits statements from files whose manifest capture time is after `audit_at`.
+The evaluation report says 178 resource states rest only on post-cutoff-captured files, although these states are described as compliant and are not cited.
+Audit this carefully against `AGENTS.md` and `problem_statement.md`, which require using only information available at or before `audit_at`.
+Produce two isolated comparisons:
+A. The current implementation, which can use a pre-cutoff event timestamp from a later-captured evidence file for linking or state reconstruction, but does not cite that late file.
+B. A strict cutoff implementation that excludes later-captured evidence from state and identity decisions.
+Compare their public sample metrics, exact-case mismatches, and full-dataset effects. Identify which public examples appear to conflict with the literal specification.
+Do not silently ignore the official cutoff rule, but do not silently damage public-sample behavior either. Explain the contradiction and recommend the narrowest defensible interpretation. Never cite a file captured after `audit_at`.
+5. Audit finding citations and verification completeness
+Inspect the planner's finding-evidence fallback and complete-case verification behavior.
+Confirm that every emitted finding's evidence actually supports the violation, rather than merely mentioning the resource.
+Confirm that all relevant records and processes are accounted for before a case is labelled COMPLETE.
+Verify that omission-based absence is used only for sufficiently complete, correctly scoped snapshots and is never inferred from an unrelated or partial capture.
+Do not fabricate references or treat an unverified assumption as proof.
+6. Re-run final evaluation
+Keep the current output hash as the baseline and measure every meaningful change.
+After the fixes:
+
+1. Run unit tests and custom evaluation suites.
+2. Run the public-sample evaluator.
+3. Generate output for the full 518-case dataset.
+4. Run the independent validator.
+5. Compare status, exact-case, step precision/recall/F1, field accuracy, sequence accuracy, and the number of weakly inferred steps.
+6. Inspect the changed cases and explain any regressions.
+7. Rebuild `code.zip`.
+8. Extract the ZIP into a clean directory, provide the official dataset separately as required, install the declared dependencies, and verify that the packaged code reproduces the intended output.
+9. Confirm the archive excludes the challenge dataset, OCR caches, secrets, and prohibited artifacts.
+10. Update the reports with real measurements and append the required final transcript entry.
+
+Do not invent hidden-answer accuracy or claim the official grader has been passed.
+Final response
+Provide the baseline-versus-final metrics, unresolved ambiguities, fixes made, artifact inventory, and any remaining submission risks.
+If a genuine specification conflict cannot be resolved from the available evidence, explain it rather than making an unsupported assumption. Keep `no-guess` as the default unless the measured evidence supports a better policy.
+Begin with the three concrete code and specification audits above. Finish the evaluation and packaging checks before declaring the project ready.
+
+Agent Response Summary:
+Audited and fixed the remaining risks without rewriting the pipeline. The default output is unchanged and byte-identical to the baseline (output.csv SHA-256 dd65f880...), and no-guess stays the default. The code changes are:
+- planner: a completion guard that never claims COMPLETE while a corroborated record's state is unknown, a violation is visible only in a post-audit file, or an unattributed tie candidate is not proven compliant;
+- finding fallback citations now require a statement that shows the violation;
+- linker, state and planner: a --strict-capture-cutoff comparison mode.
+
+Measured results:
+- The guard changed 0 public or eval answers under all three link policies and fixed a new false-COMPLETE fixture (suite_guard).
+- Strict cutoff drops public exact-case accuracy from 0.875 to 0.656, because 7 public answers depend on pre-cutoff lines in late exports. It changes 126 eval cases and 2 statuses. The current interpretation is kept.
+- All 1,188 cited steps are supported by their cited file, and 0 cite a post-audit file.
+
+Packaging:
+- The OCR cache, the dataset rules copy and the dataset identifiers are now excluded or scrubbed, and the packager refuses dataset-derived content.
+- OCR dependencies are pinned as required.
+- A clean venv rebuilt from code.zip, with the dataset supplied separately and fresh OCR, reproduced output.csv byte-for-byte.
+- 43/43 tests pass.
+
+Actions:
+* Edited code/ghost_audit/planner.py (completion guard, tie candidates, violation-only fallback citation, strict mode), state.py (strict_capture), linker.py (strict mode, owners_known, tie_candidates), pipeline.py, diagnostics.py (guard counts), main.py and evaluation/main.py (--strict-capture-cutoff, OCR warnings, telemetry field)
+* Edited code/validate_output.py (verification-only INCOMPLETE is a warning; remediation without a finding is an error)
+* Edited code/package_submission.py (exclude evidence_cache, dataset-identical files, fixture rules copy; identifier gate; --out), code/requirements.txt (pinned required pypdf/rapidocr/onnxruntime/opencv/numpy; anthropic optional)
+* Edited code/evaluation/custom_cases/build_custom_cases.py (fixtures under data/, synthetic names, new suite_guard cust_13/14, ensure_rules); rebuilt all three suites
+* Added code/tests/test_final_review.py (12 tests); scrubbed dataset strings from code/tests/test_second_pass.py
+* Ran unit tests (43 OK), public scorer (default, full, strict), custom suites (14/14 exact), full 518-case run, validator (VALID), cutoff A/B comparison, citation-support audit, heuristic-dependence audit, baseline-vs-final diffs for all policies
+* Regenerated output.csv (unchanged, dd65f880...), code/evaluation/diagnostics_summary.md, last_run_usage.json; rebuilt code.zip and inspected it (72 files; no dataset, OCR cache, secrets, caches or nested archives)
+* Created a clean venv in a temporary directory, installed code/requirements.txt from PyPI, ran the extracted code.zip with the dataset supplied separately (byte-identical output, 43 tests pass); deleted the venv and extraction afterwards
+* Rewrote code/evaluation/evaluation_report.md; updated code/evaluation/usage_report.md and README.md
+* Appended this entry to log.txt
+
+Context:
+tool=Claude Code
+model=claude-opus-5-5
+branch=unknown (not a git repository)
+repo_root=C:\Users\heman\Dropbox\PC\Desktop\Programming 19\Hackathon-build-AI-agent
+worktree=main
+parent_agent=none
+
+## [2026-10-24T21:49:05Z] Release-freeze check: hashes, archive, log and trace instructions
+
+User Prompt (verbatim, secrets redacted):
+The final implementation and evaluation are complete. Do not make further code or output changes unless you discover a concrete defect.
+Perform a release-freeze check only:
+
+1. Confirm the final SHA-256 hashes of `output.csv` and `code.zip`, and verify that the output hash matches the reported tested version.
+2. Confirm that `code.zip` excludes the challenge dataset, screenshot OCR caches, secrets, nested archives, and unnecessary generated files.
+3. Confirm that `log.txt` is complete and follows `AGENTS.md`.
+4. Explain exactly how I should export the readable Claude Code transcripts and collect the original relevant session JSONL files, following `agent_trace_instructions.md`, to create `agent-trace.zip`.
+5. Give me a final upload checklist distinguishing the required `output.csv`, `code.zip`, `log.txt` chat-transcript submission, and `agent-trace.zip`.
+6. State the remaining known limitations without claiming hidden-answer accuracy or official-grader success.
+
+Do not fabricate trace files, alter historical logs, or regenerate the final output unnecessarily. Finish with the exact Windows commands needed for a final smoke test and the expected output hash.
+
+Agent Response Summary:
+Read-only release-freeze check; no code, output or historical log entry was changed. The checks found:
+- output.csv SHA-256 is dd65f880... and matches the reported tested and clean-reproduced version; it is valid, with 518 rows.
+- code.zip SHA-256 is 62f6d922... (72 files). Every entry matches the current source, and the archive passes zip integrity.
+- The archive contains no dataset paths, dataset-identical files, OCR cache, secrets, nested archives, caches or generated outputs, and no dataset identifiers.
+- log.txt has 9 prior entries, each with one valid tool= and one valid model= line, ISO timestamps in order, all required sections, UTF-8 with LF line endings and no secret-like strings. They cover all 7 earlier human prompts in the session JSONL.
+
+Read agent_trace_instructions.md and gave export/collection steps for the single Claude Code session 9ea3efba-e284-4d0d-95e3-6cce01fd4a03 (JSONL plus companion folder), the upload checklist, limitations and Windows smoke-test commands.
+
+Actions:
+* Ran sha256sum on output.csv, code.zip and log.txt; ran code/validate_output.py (read-only)
+* Inspected code.zip with Python zipfile: testzip, byte comparison with repo files, exclusion and identifier scans
+* Parsed log.txt entries and fields; parsed the session JSONL for human prompts, sidechains and secret-like patterns (none found)
+* Listed %USERPROFILE%\.claude\projects for this project's session files; read agent_trace_instructions.md
+* Appended this entry to log.txt
+
+Context:
+tool=Claude Code
+model=claude-opus-5-5
+branch=unknown (not a git repository)
+repo_root=C:\Users\heman\Dropbox\PC\Desktop\Programming 19\Hackathon-build-AI-agent
+worktree=main
+parent_agent=none

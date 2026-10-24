@@ -1,15 +1,15 @@
 # Usage Report — Final Full-Dataset Run
 
-The final `output.csv` (518 cases, SHA-256 `dd65f880…`) was produced by the second-pass implementation with:
+The final `output.csv` (518 cases, SHA-256 `dd65f880…`) was produced by the final implementation with:
 
 ```bash
 python code/main.py
 ```
 
-- **Default settings:** link policy `no-guess`, bundle-order resolver off, no `--llm` flag.
+- **Default settings:** link policy `no-guess`, bundle-order resolver off, default cutoff interpretation (no `--strict-capture-cutoff`), no `--llm` flag.
 - **Determinism:** the run is deterministic.
 - **Telemetry:** the run's own record, written by `code/main.py` to `code/evaluation/last_run_usage.json`, shows `model_calls: 0` and `llm_enabled: false`.
-- **Comparison runs:** the `full` and `corroborated` link-policy runs, the evaluation runs and the custom suites made no model calls either.
+- **Comparison runs:** none of these made model calls either: the `full` and `corroborated` link-policy runs, the strict-cutoff comparison, the evaluation runs, the custom suites and the clean-environment reproduction.
 
 ## Production inference usage (the run that produced `output.csv`)
 
@@ -31,7 +31,10 @@ Why there are no model calls:
 
 Non-LLM local processing:
 
-- **OCR.** The 11 screenshots were OCR'd once with RapidOCR, an ONNX model running locally (not a language model, no API, no cost). The text is cached in `code/ghost_audit/evidence_cache/` and the final run read the cache.
+- **OCR.** The 11 screenshots are OCR'd with RapidOCR, an ONNX model running locally (not a language model, no API, no cost).
+  - The text is cached locally in `code/ghost_audit/evidence_cache/` after the first run. The final run read that local cache.
+  - The cache is derived from challenge evidence, so it is not part of `code.zip`.
+  - The clean-environment reproduction (fresh venv, no cache) re-ran OCR from scratch in about 43 s. It produced identical OCR text and a byte-identical `output.csv`.
 - **PDFs.** Text from the 4 PDFs was extracted locally with `pypdf`.
 
 ## If the optional fallback is enabled

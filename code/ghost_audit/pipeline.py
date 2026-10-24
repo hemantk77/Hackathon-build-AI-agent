@@ -37,7 +37,11 @@ class RunResult:
 
 
 def run_pipeline(data_dir: Path, requests_file: str = "deletion_requests.csv", llm=None,
-                 link_policy: str = DEFAULT_LINK_POLICY, use_bundle_order: bool = False) -> RunResult:
+                 link_policy: str = DEFAULT_LINK_POLICY, use_bundle_order: bool = False,
+                 strict_capture_cutoff: bool = False) -> RunResult:
+    """strict_capture_cutoff=False (default): a statement timestamped <= audit_at inside a file
+    exported after audit_at may inform linking and state but is never cited. True: such files are
+    ignored entirely for that request (comparison mode; see evaluation report)."""
     allowed = LINK_POLICIES[link_policy]
     ds = Dataset(Path(data_dir), requests_file)
     evidence = EvidenceIndex(ds.data_dir, ds.manifest)
@@ -68,9 +72,12 @@ def run_pipeline(data_dir: Path, requests_file: str = "deletion_requests.csv", l
                 "identifier_changes": subject.history,
             }
 
-    linker = Linker(cases, evidence, identity, activity, use_bundle_order=use_bundle_order)
+    linker = Linker(cases, evidence, identity, activity, use_bundle_order=use_bundle_order,
+                    strict_capture=strict_capture_cutoff)
     links = linker.run()
-    planner = Planner(policy, linker.obs_by_resource, evidence.scopes, evidence.captured)
+    ties = linker.tie_candidates()
+    planner = Planner(policy, linker.obs_by_resource, evidence.scopes, evidence.captured,
+                      strict_capture=strict_capture_cutoff)
     results = []
     for case in cases:
         if not case.predict:
@@ -79,7 +86,7 @@ def run_pipeline(data_dir: Path, requests_file: str = "deletion_requests.csv", l
             res = CaseResult(case.case_id, "INCOMPLETE", [], notes=["request email does not resolve to a subject"])
         else:
             kept = {rid: l for rid, l in links.get(case.case_id, {}).items() if l.confidence in allowed}
-            res = planner.assess(case, kept)
+            res = planner.assess(case, kept, sorted(t for t in ties.get(case.case_id, ()) if t[0] not in kept))
             dropped = sorted(rid for rid, l in links.get(case.case_id, {}).items() if l.confidence not in allowed)
             if dropped:
                 res.notes.append(f"excluded by link policy '{link_policy}': {', '.join(dropped)}")

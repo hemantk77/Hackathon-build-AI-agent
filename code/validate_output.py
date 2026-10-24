@@ -61,7 +61,7 @@ def read(path: Path) -> list[dict]:
         return list(csv.DictReader(fh))
 
 
-def validate(out_path: Path, data_dir: Path, requests_file: str) -> list[str]:
+def validate(out_path: Path, data_dir: Path, requests_file: str, warnings: list | None = None) -> list[str]:
     errors: list[str] = []
     requests = {r["case_id"]: r for r in read(data_dir / requests_file)}
     evidence_time = {r["file_id"]: ts(r["captured_at"]) for r in read(data_dir / "evidence_files.csv")}
@@ -152,7 +152,12 @@ def validate(out_path: Path, data_dir: Path, requests_file: str) -> list[str]:
         if status == "INCOMPLETE":
             ops = {(s["operation"], s["resource_id"]) for s in steps if isinstance(s, dict)}
             if not any(op.startswith("REPORT_") for op, _ in ops):
-                errors.append(f"{where} INCOMPLETE without findings")
+                # The schema has no UNKNOWN status; a case whose completion cannot be established
+                # (no evidenced violation) may carry only the checks that must pass.
+                if any(op in VERIFY_FOR_REMEDIATION for op, _ in ops):
+                    errors.append(f"{where} INCOMPLETE remediation without any finding")
+                elif warnings is not None:
+                    warnings.append(f"{where} INCOMPLETE without findings (verification-only)")
             for op, rid in ops:
                 if op in REMEDIATION_FOR_FINDING and (REMEDIATION_FOR_FINDING[op], rid) not in ops:
                     errors.append(f"{where} finding {op} {rid} has no matching remediation")
@@ -168,7 +173,10 @@ def main(argv=None) -> int:
     ap.add_argument("--data-dir", default=str(repo / "dataset"))
     ap.add_argument("--requests", default="deletion_requests.csv")
     args = ap.parse_args(argv)
-    errors = validate(Path(args.output), Path(args.data_dir), args.requests)
+    warnings: list = []
+    errors = validate(Path(args.output), Path(args.data_dir), args.requests, warnings)
+    for w in warnings[:20]:
+        print("  warning:", w)
     if errors:
         print(f"INVALID: {len(errors)} problem(s)")
         for e in errors[:50]:

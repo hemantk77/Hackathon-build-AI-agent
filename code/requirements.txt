@@ -1,9 +1,18 @@
-# Required: PDF text extraction (falls back to the `pdftotext` binary if missing).
-pypdf>=4.0
+# Runtime dependencies (all required for a normal run). Versions are the ones the submitted
+# output.csv was produced and reproduced with (Python 3.13, CPU); other versions are likely to
+# work but OCR text, and therefore the screenshot-based steps, was only verified with these.
 
-# Optional: only needed to re-run OCR when code/ghost_audit/evidence_cache/ lacks a screenshot's text.
-# The cache for the supplied 11 screenshots is shipped, so a normal run does not import it.
-rapidocr-onnxruntime>=1.2
+# PDF text extraction (falls back to the `pdftotext` binary if pypdf cannot read a page).
+pypdf==6.16.2
 
-# Optional: only for `python code/main.py --llm` (off by default; needs ANTHROPIC_API_KEY).
-anthropic
+# Screenshot OCR. The OCR models ship inside the wheel; no network access is needed at run time.
+# OCR text is cached locally in code/ghost_audit/evidence_cache/ after the first run; the cache
+# is derived from the challenge evidence and is never packaged.
+rapidocr-onnxruntime==1.2.3
+onnxruntime==1.31.0
+opencv-python==5.0.0.93
+numpy==2.2.5
+
+# Optional, not installed by default: `anthropic` is only needed for `python code/main.py --llm`
+# (off by default; reads ANTHROPIC_API_KEY from the environment). Install it separately:
+#   python -m pip install anthropic

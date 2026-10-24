@@ -1,10 +1,18 @@
-# Evaluation Report — Ghost Data Still Exists (second pass)
+# Evaluation Report — Ghost Data Still Exists (final review)
 
 All numbers come from the commands in [Reproduction](#reproduction), run on the final code.
 
-- **No hidden answers were available or used.** Public-sample accuracy, custom-suite accuracy and the internal consistency of the 518-case output are separate measurements and are reported separately.
-- "Baseline" means the first-pass implementation (submission v1, `output.csv` SHA-256 `1fc4a7fe…`). That implementation was preserved unchanged and re-run for every old-vs-new comparison below.
-- The final output has SHA-256 `dd65f880…`.
+- **No hidden answers were available or used.** Public-sample accuracy, custom-suite accuracy and the internal consistency of the 518-case output are separate measurements and are reported separately. Nothing here claims that the official grader has been passed.
+- **Implementations compared:**
+  - "v1" is the first-pass implementation (`output.csv` SHA-256 `1fc4a7fe…`).
+  - "second pass" is the implementation before this final review (`output.csv` `dd65f880…`).
+  - Both were preserved unchanged and re-run for every comparison below.
+- **The final output is `dd65f880…`**, byte-identical to the second pass. The final review changed:
+  - how completion is decided;
+  - how findings choose their evidence;
+  - packaging and reproducibility.
+
+  None of these changes moved any public or eval answer under the default settings (§2, §6).
 
 ## 1. Metrics
 
@@ -18,239 +26,334 @@ The scorer is `code/evaluation/main.py`. It ignores JSON key order but respects 
 | Field accuracy | Position-by-position agreement of all 7 fields over `max(len(pred), len(gold))` positions. A missing step shifts every later position, so one omission can cost many fields. |
 | Sequence accuracy / LCS | Exact match / longest-common-subsequence ratio of the ordered `(phase, operation, system_id, resource_id)` keys. |
 
-## 2. Public sample (32 cases) — baseline vs. improved
+## 2. Public sample (32 cases)
 
-| Implementation / link policy | Status | Exact case | Step P | Step R | Step F1 | Field | Sequence | LCS |
+| Implementation / setting | Status | Exact case | Step P | Step R | Step F1 | Field | Sequence | LCS |
 |---|---|---|---|---|---|---|---|---|
-| Baseline (v1) | 1.0000 | 0.8438 | 0.9895 | 0.9741 | 0.9817 | 0.9674 | 0.8438 | 0.9639 |
-| **Improved, `no-guess` (default)** | **1.0000** | **0.8750** | **1.0000** | **0.9793** | **0.9895** | 0.9578 | **0.8750** | **0.9743** |
-| Improved, `full` (also pairs genuine ties) | 1.0000 | 0.8750 | 0.9947 | 0.9793 | 0.9869 | 0.9682 | 0.8750 | 0.9743 |
-| Improved, `corroborated` (direct + strong links only) | 1.0000 | 0.3438 | 1.0000 | 0.8756 | 0.9337 | 0.7757 | 0.3438 | 0.7973 |
+| v1 | 1.0000 | 0.8438 | 0.9895 | 0.9741 | 0.9817 | 0.9674 | 0.8438 | 0.9639 |
+| Second pass, `no-guess` | 1.0000 | 0.8750 | 1.0000 | 0.9793 | 0.9895 | 0.9578 | 0.8750 | 0.9743 |
+| **Final, `no-guess` (default)** | **1.0000** | **0.8750** | **1.0000** | **0.9793** | **0.9895** | **0.9578** | **0.8750** | **0.9743** |
+| Final, `full` (also pairs genuine ties) | 1.0000 | 0.8750 | 0.9947 | 0.9793 | 0.9869 | 0.9682 | 0.8750 | 0.9743 |
+| Final, `corroborated` (direct + strong links only) | 1.0000 | 0.3438 | 1.0000 | 0.8756 | 0.9337 | 0.7757 | 0.3438 | 0.7973 |
+| Final, `--strict-capture-cutoff` (comparison only, §5) | 1.0000 | 0.6562 | 1.0000 | 0.9275 | 0.9624 | 0.8601 | 0.6562 | 0.9203 |
 
 Exact-case and step metrics are reported separately on purpose: 4 of 32 cases are still not exact, even though step F1 is 0.99.
 
-### 2.1 The five baseline mismatches
+### 2.1 The remaining public mismatches
 
-| Case | Expected vs predicted status | Baseline difference | Root cause | Correction | Final |
-|---|---|---|---|---|---|
-| case_03 | COMPLETE / COMPLETE | Step 3 `resource_id`: `analytics_5589` instead of `analytics_9406` (1 of 21 fields; evidence, order and numbering correct) | Two indistinguishable anonymize events in one reporting slot (case_03 and eval case_44), paired by coin flip. | Learned **run cadence**: consecutive policy actions of one deletion run are 390 s or 449 s apart (values learned from directly linked runs). `analytics_5589` sits exactly 390 s before case_44's own support redaction, so `analytics_9406` falls to case_03 by exclusion. | **Exact** |
-| case_04 | COMPLETE / COMPLETE | Missing `VERIFY_RECORD_ABSENT account_service account_004 evidence_54`; the remaining step shifts, giving 12 field mismatches | `account_004` appears in **no** participant file: no evidence row, activity row, PDF or OCR text. | None possible without inventing a resource ID. | Unchanged (unsupported) |
-| case_18 | INCOMPLETE / INCOMPLETE | Missing `VERIFY_RECORD_PRESENT security_service audit_record_6645`; later positions shift (19 field mismatches); findings and remediation correct | `audit_record_6645` appears nowhere; the subject (user_50) has no security record anywhere. | None possible. | Unchanged (unsupported) |
-| case_20 | INCOMPLETE / INCOMPLETE | Missing `VERIFY_RECORD_PRESENT security_service audit_record_5569`; 11 field mismatches | `audit_record_5569` appears nowhere; user_48 has no security record. The digits match case_18's `support_5569` and ticket `CS-5569`, which are unrelated collisions. | None possible. | Unchanged (unsupported) |
-| case_23 | INCOMPLETE / INCOMPLETE | Baseline guessed `account_7015` for `account_410` (1 field) | A genuine **three-way tie**: `account_410`, `account_7015` and `account_9155` (all FAILED, same slot) for case_23 / case_547 / case_548. None of the three appears in any evidence. | Under the default, no account is asserted. The account step is missing, so the three later positions shift (15 field mismatches), but no wrong resource is claimed. With `--link-policy full` the guess returns (1 field, wrong). | Still ambiguous |
+| Case | Difference | Root cause | Status |
+|---|---|---|---|
+| case_04 | Missing `VERIFY_RECORD_ABSENT account_service account_004 evidence_54` | `account_004` appears in **no** participant file: no evidence row, activity row, PDF or OCR text. `evidence_54`'s tables list `account_005`, `8741`, `9116` and `7204`. | Unsupported. No resource id is invented. |
+| case_18 | Missing `VERIFY_RECORD_PRESENT security_service audit_record_6645` | Appears nowhere. The subject (user_50) has no security record anywhere. Only an unrelated `account_6645` exists. | Unsupported |
+| case_20 | Missing `VERIFY_RECORD_PRESENT security_service audit_record_5569` | Appears nowhere. `support_5569` and ticket `CS-5569` are unrelated digit collisions. | Unsupported |
+| case_23 | Missing the account verification | A genuine three-way tie (`account_410`, `account_7015`, `account_9155`, all FAILED, same slot) for case_23 / case_547 / case_548. None of the three appears in any evidence. | Ambiguous. Not asserted under `no-guess`. `full` guesses (wrong here). |
 
-### 2.2 The three "missing" reference records
+Each missing id was searched for as a full id and as bare digits, across all CSVs, SQL text and parsed rows, nested JSON, log lines, PDF text and the OCR text of all 11 screenshots. Parser coverage was 94/94 files.
 
-Each was searched for as a full ID and as its bare digits, across:
-- all CSVs;
-- the SQL text and the parsed rows;
-- JSON, including nested fields;
-- log lines and traces;
-- PDF text (pypdf);
-- the OCR text of all 11 screenshots.
+The case_01 to case_32 fixes from earlier passes are described in §11.
 
-Parser coverage was 94/94 files with no failures.
+## 3. Heuristic dependence of the submitted output (`no-guess`)
 
-- **`account_004` (case_04, gold cites `evidence_54`).** Not in `evidence_54`, whose failover and primary tables list `account_005`, `8741`, `9116` and `7204`, nor anywhere else. The gold step relies on information that is not participant-visible. Genuinely unsupported.
-- **`audit_record_6645` (case_18).** Only unrelated `account_6645` (February) exists. Genuinely unsupported.
-- **`audit_record_5569` (case_20).** Only `support_5569` (case_18's support ticket) and `CS-5569` (ticket of `support_6569`) exist. Genuinely unsupported.
+The ambiguity classes are defined in `ghost_audit/linker.py`:
+- **direct:** an exact identifier, or a catalog row the record does not contradict;
+- **strong:** a unique reporting slot that is also corroborated by audit-time evidence;
+- **weak:** a workflow/timing inference;
+- **unresolved:** a tie the evidence cannot break.
 
-## 3. Ambiguous identity and resource assignments
+Unresolved ties are **not** weak inferences. They are never written under the default.
 
-### 3.1 Confidence classes (defined in `ghost_audit/linker.py`)
+| Class | Method (evidence basis) | Output steps | Cases |
+|---|---|---|---|
+| direct | identifiers on the record or its trace; catalog rows; identifier + slot | 2,877 | — |
+| strong | unique slot + record present in the request's audit-time evidence | 35 | 34 |
+| weak | `slot_unique`: only request in the reporting slot, no audit-time corroboration | 118 | 118 |
+| weak | `clean_run`: a successful action belongs to a run without failed follow-ups | 38 | 38 |
+| weak | `run_cadence`: chained 390 s / 449 s from the request's own actions | 29 | 29 |
+| weak | `slot_exclusion_by_direct_links`: unique after removing requests already holding that system | 21 | 21 |
+| weak | `evidence_coverage`: account tie partitioned by which account the audit capture checked | 5 | 5 |
+| weak | `slot_exclusion_propagated`: unique after removing other inferred links | 3 | 3 |
+| weak | `in_audit_capture`: only one candidate's audit capture contains the record | 1 | 1 |
+| **weak, total** | | **215 (6.9%)** | **203** |
+| unresolved (excluded) | genuine ties; `full` would add them | 0 written (121 under `full`) | 109 cases have an excluded tie |
 
-| Class | Definition |
+Additional measurements:
+- Every weak step is a **verification** step. All 508 deletion statuses depend only on direct links.
+- `corroborated` (which removes all workflow inference) changes 0 statuses.
+- `full` adds 121 steps, all verifications, and changes 0 statuses.
+- `no-guess` stays the default: on the public sample `full` has the same exact-case score, lower precision (0.9947) and lower F1 (0.9869).
+
+The evidence does not support switching policy.
+
+## 4. COMPLETE decisions and unknown state (completion guard)
+
+**Audit of the second-pass rule.** The rule was "COMPLETE when no linked record is violating". Measured on the 518 eval cases:
+
+| Question | Result |
 |---|---|
-| **direct** | An exact identifier of the subject (current or historical email, email hash, phone, `user_id`) on the record or its lookup trace, within `[requested_at, audit_at]`. Or a catalog row naming the subject that the record itself does not contradict with another known customer's identifiers. |
-| **strong** | A deletion-worker event that is the only candidate in exactly one request's reporting slot, after excluding requests that already hold a directly linked record of that system. The record must also appear in that request's audit-time evidence. That gives two independent sources. |
-| **weak** | Any other workflow inference: exclusivity propagation, run cadence, clean-run filter, evidence-coverage consistency, or an uncorroborated unique slot. |
-| **unresolved** | A tie the evidence cannot break. |
+| Linked resources whose state at `audit_at` is unknown | 6. All are weak links in INCOMPLETE cases. |
+| COMPLETE cases with any unknown-state linked resource | 0 |
+| COMPLETE cases missing verification for a linked resource | 0 |
+| INCOMPLETE cases with a known violation but no finding evidence captured ≤ `audit_at` | 0 |
+| Deletion cases with no linked account | 107 (75 INCOMPLETE, 32 COMPLETE) |
+| COMPLETE cases whose primary account is unattributed | 47. In 46 of them, every candidate account in the tie is proven absent. The 47th (case_45) has no account event at all; its only record is a retained audit record. |
 
-### 3.2 What workflow metadata is and is not used for
+**Gap found.** The rule could report COMPLETE while an unattributed record that may be the requester's still existed. The eval data happens not to contain that situation, but the rule allowed it, so this was a latent false-completion risk.
 
-- **Legitimacy.** Deletion-worker events name resources but no subject. They are emitted in the request's reporting slot (accounts about 1h before `reported_at`). The primary-account submission's result mirrors the reported workflow status in all 24 public cases that have such an event. Both signals are used **only as linkage clues**.
-- **State.** Neither `reported_status` nor `reported_result` is ever used as evidence of a record's state. State comes only from evidence observations (`state.py`).
-- **When the signal is absent or misleading.** The record is simply not linked: a verification step goes missing, but no state or status is invented. Records already tied by an identifier to another subject are never reassigned.
-- **Measured effect.** The status of all 508 deletion requests depends only on **direct** links. The `corroborated` policy, which removes every workflow inference, changes **0** statuses on the 518 cases. Workflow inference contributes only verification steps:
+**Schema limitation.** There is no `UNKNOWN` status. The choices for an unestablished case are:
+- claim COMPLETE (risking a false completion);
+- invent a finding (forbidden);
+- report INCOMPLETE with only the checks that must pass.
 
-| Policy (full dataset) | Output steps | Steps on weak/unresolved links | Status changes vs default |
-|---|---|---|---|
-| `corroborated` | 2,912 | 0 (0.0%) | 0 |
-| **`no-guess` (default)** | **3,127** | **215 weak (6.9%)** | — |
-| `full` | 3,248 | 10.3% (adds unresolved pairings) | 0 |
+The last is the most defensible contract-compliant behaviour.
 
-### 3.3 Audit of the baseline's coin-flip assignments (eval cases)
+**Rule implemented (planner.py).** A case with no evidenced violation is still not claimed COMPLETE when any of these holds:
+1. a direct- or strong-linked record's state at `audit_at` is unknown;
+2. a violation is visible only in a file captured after `audit_at` (it cannot be cited);
+3. any record in an unattributed tie that the request is part of is not proven compliant.
 
-The baseline paired 137 eval-set records by coin flip (102 accounts, 35 analytics). After the second pass:
+In those cases the output is INCOMPLETE with verification steps only (empty `evidence_id`, no finding), and a diagnostics note gives the reason. If every tie candidate is proven compliant, the requester's record is compliant whichever candidate it is; the case may then be COMPLETE, and the tie is noted but never asserted. Weak-linked records with unknown state are reported in notes but do not block completion, because they may not be the requester's at all.
 
-| Record type | Now resolved, same request | Now resolved, different request (baseline was wrong) | Still a genuine tie (not asserted by default) |
-|---|---|---|---|
-| Accounts (102) | 3 (evidence coverage) | 2 (case_191 ↔ case_192, evidence coverage) | 97 |
-| Analytics (35) | 10 (run cadence 6, clean run 3, exclusion 1) | 5 (run cadence 2, clean run 2, exclusion 1) | 20 |
+The validator now treats a verification-only INCOMPLETE as a warning, not an error. Remediation without a finding remains an error.
 
-The baseline also left 47 anonymize events unassigned. Now 7 events remain unassignable without a guess (5 analytics, 2 legal holds), and they are listed in `diagnostics_summary.md`.
+**Impact, measured (second pass vs final):**
 
-Across the final event log of 1,466 deletion-worker events:
-- **direct:** 1,039 owned by an identified subject, plus 19 that belong to another identified subject and are never reassigned;
-- **strong:** 38;
-- **weak:** 235;
-- **paired-but-excluded genuine ties:** 122 (98 accounts in 2- or 3-way ties, 24 analytics);
-- **unassignable:** 7;
-- **no request with a free slot:** 6.
-
-### 3.4 The weak resolvers, measured
-
-Each resolver below was switched off individually on the public sample, under the default policy.
-
-| Resolver | What it encodes | Public sample without it | Status |
-|---|---|---|---|
-| Run cadence (learned: 390 s, 449 s) | Consecutive policy actions of one run are spaced by a recurring interval. | exact 0.8438 (−0.031), F1 0.9869 | Kept (weak). Resolves 4/4 public analytics ties correctly. |
-| Clean-run filter | A *successful* anonymization belongs to a run without failed or pending follow-ups. | exact 0.7500 (−0.125), F1 0.9788 | Kept (weak). |
-| Evidence-coverage consistency | In an account tie, the explicitly checked account (for example a 404 lookup) belongs to the clean-run request and the unchecked one to the request with failed follow-ups. Applied only when that partition yields exactly one pairing. | exact 0.8125 (−0.063), F1 0.9842 | Kept (weak). Consistent with all 9 accounts of public batch 2026-09-15; fixes the case_28/29 tie. |
-| Snapshot (bundle) record order | Bundles list collections in a consistent subject order. | exact 0.8750 (±0), F1 0.9895 | **Off by default** (`--use-bundle-order`). No public-sample benefit; only 3 eval records depended on it. |
-
-Never used: `case_id` numbering, event-time order versus subject order (measured at about 50/50 concordance), and readback-log adjacency. Adjacency would have assigned `analytics_5589` to case_03, which the public answer contradicts.
-
-## 4. Screenshot/catalog conflict (case_63) and catalog conflict handling
-
-**Evidence collected:**
-- The screenshot `evidence_60` (captured 2026-09-16 07:20) was inspected visually. It shows `marketing_001 · sj.park@naver.com · +82 10-5837-9451` (Soo-jin Park, South Korea, "Live"), last refreshed 2026-09-15 23:40 UTC, which is after the requester's reported deletion at 22:20.
-- OCR is correct.
-- The catalog row `activity_4008` (2026-09-16 07:27) links `marketing_001` to `kwame-mensah@proton.me` and `user_09` (Kwame Mensah, Ghana).
-- `sj.park@naver.com` and the Korean phone number match **no** customer in `user_identities.csv` or `user_audit_log.csv`.
-- No other evidence mentions `marketing_001`.
-
-**Determination.**
-- This is not an OCR failure, and it is not a false join to another *known* customer.
-- The screenshot and catalog genuinely contradict each other, and no participant data can settle it.
-- The other 11 catalog rows are each corroborated by their evidence.
-
-**Rule implemented (general, not case-specific):**
-- A catalog link is **rejected** when the record's own identifiers belong to a different *known* customer.
-- When those identifiers match nobody, the catalog link is **kept and flagged** as an unresolved conflict in diagnostics.
-
-The rule is tested two ways:
-- custom case cust_06 (another known customer, so the link is rejected; the baseline wrongly reported INCOMPLETE);
-- unit test `test_case_63_catalog_conflict_is_kept_and_flagged`.
-
-The second-pass audit also found a false conflict on case_50. OCR had glued `user_20-analytics_7438-` onto the e-mail address. The OCR normalization now splits glued identifiers (unit-tested), and case_50 is correctly unflagged.
-
-## 5. Assumptions challenged
-
-| Assumption | Classification | Finding | Change |
-|---|---|---|---|
-| Backups in screenshots ("no visible block ⇒ restorable") | Was a default assumption; now an evidence-supported inference | Restore is now asserted only when the document is a restore console listing the archive (restore operations shown) and the archive's row carries no block marker. A plain listing gives *unknown*. Affects one case (case_55, Vault Recovery Manager). | Positive indicators required (unit-tested) |
-| Connectors in screenshots | Evidence-supported inference | Active only when the connector's **own row** shows a streaming indicator ("Continuous", delivery figures). Previously any page without "disabled" counted. Affects case_39, whose row shows Continuous and 1,284 events/hour. | Row-level indicators (unit-tested) |
-| Absence by omission | Inference, tightened | Query-style exports (point lookups) can no longer prove absence. Only snapshot captures can. A capture may *override* an explicit "present" only if it was taken for this audit (within 30h of `audit_at`). Public case_05 shows why: present in the account replica, merely unlisted in another batch's later inventory. Pure omission (no explicit statement) uses the latest post-workflow snapshot and is labelled `omission` in diagnostics. | 140 omission states, 1 override (case_126). Case_191 no longer cites a query export (cust_07 fixture) |
-| Expired security retention ⇒ delete | Rule-derived inference | **Unexercised**: every `retention_until` in the data is 2031–2034. | None |
-| Hash-only analytics contact record ⇒ delete (secondary identifier) | Evidence-supported; confirmed by public case_12 | Only one such record exists in all evidence, and it belongs to sample case_12. | None |
-| Evidence freshness | Requirement + one inference | **Requirement:** statements dated after `audit_at` are ignored, and citations must be captured at or before `audit_at`. **Inference** (confirmed by public case_09, whose gold lists records found only in a log exported after the cutoff): a pre-cutoff line inside a post-cutoff file may link records and inform state but is never cited. Measured: 0 conflicts between late and citable evidence. 178 states rest only on late files, and all are *compliant* states (none is a finding or a citation). | Guarded by cust_08 and unit tests |
-| Workflow statuses and results as proof | Excluded (requirement) | Never used as state evidence; linkage only (§3.2). | — |
-
-## 6. Custom evaluation cases — baseline vs. improved
-
-The fixtures are built by `code/evaluation/custom_cases/build_custom_cases.py`. The data is fictional; expected answers were written by hand from the contract, not generated. They demonstrate behaviours; they are not evidence of hidden-answer accuracy.
-
-| Case | Failure mode | Expected behaviour (why it follows from the contract) | Baseline | Improved |
-|---|---|---|---|---|
-| cust_01 | Historical email + `.jr` decoy | Only the old-email search hit is the subject's; exact-match identity only. | pass | pass |
-| cust_02 | Post-audit recreation | A snapshot captured after `audit_at` cannot change the answer: COMPLETE, citing the pre-audit file. | pass | pass |
-| cust_03 | Replica drift | A replica copy is a remaining record: INCOMPLETE. | pass | pass |
-| cust_04 | Spanish data-copy request refusing deletion | No deletion authorized: NOT_APPLICABLE `[]`. | pass | pass |
-| cust_05 | Tombstone with PII + active connector + restorable backup | Ordered findings, then disable → block → redact, then 5 verifications. | pass | pass |
-| cust_06 | Conflicting identity evidence | The catalog points at a ticket carrying another known customer's e-mail: false join, so COMPLETE for the requester. | **fail** (INCOMPLETE, reports the other customer's PII) | pass |
-| cust_07 | Partial capture | A query export that never looked the account up cannot override an explicit 200: INCOMPLETE. | **fail** (COMPLETE) | pass |
-| cust_08 | Post-cutoff evidence file | The late log's pre-cutoff 404 links the account; its post-cutoff "restore blocked" line is ignored; the finding cites the pre-cutoff inventory. | pass | pass |
-| cust_09/10 | Ambiguity resolved by exclusion | One account is identified by e-mail, so the other is attributed by exclusion (weak). | pass | pass |
-| cust_11/12 (`suite_ambiguous`, policy no-guess) | Genuine tie | Two indistinguishable account events and no evidence: no account step is asserted. | **fail** (asserts guessed accounts) | pass |
-
-| Suite | Baseline exact / F1 | Improved exact / F1 |
+| Run | Cases changed | Status changes |
 |---|---|---|
-| `suite` (10 cases) | 0.800 / 0.827 | **1.000 / 1.000** |
-| `suite_ambiguous` (2 cases, no-guess) | 0.000 / 0.889 | **1.000 / 1.000** |
+| Public sample, `no-guess` / `full` / `corroborated` | 0 / 0 / 0 | 0 / 0 / 0 |
+| 518 eval cases, `no-guess` / `full` / `corroborated` | 0 / 0 / 0 | 0 / 0 / 0 |
+| Custom `suite`, `suite_ambiguous` | 0 | 0 |
+| Custom `suite_guard` (new, §8) | 2 | 2 (false COMPLETE → INCOMPLETE) |
 
-**Which improvements are robust and which are heuristic:**
-- **Robust, contract-driven:** catalog-conflict rejection, query-versus-snapshot scopes, the override window, row-level screenshot indicators, the OCR glue fix, and not asserting ties.
-- **Heuristic, workflow/timing-based:** run cadence, clean-run filter and evidence coverage. Each is labelled `weak` in diagnostics, measured in §3.4, and never decides a status.
+Under the default, the guard flags 10 non-compliant tie candidates in 8 eval cases. All 8 are already INCOMPLETE on evidenced findings. In 110 cases the unattributed tie had every candidate proven compliant.
 
-## 7. Unit tests and the independent validator
+## 5. Evidence timestamps vs the cutoff rule
 
-`python -m unittest discover -s code/tests`: **31 tests, all passing** (15 first-pass + 16 second-pass). The second-pass tests cover:
-- timestamps (offsets, inclusive cutoff, one second after);
-- identity-link uniqueness (shared identifiers never link; exact email resolution);
-- evidence-reference validity (unknown or late ids rejected; activity ids accepted);
-- ordering (data-flow and restore blocks precede record changes; string ordering of resource ids);
-- partial captures (query versus snapshot; an old filtered capture cannot override);
-- screenshot indicators and OCR glue;
-- case_63 conflict flagging;
-- status never depending on weak links;
-- tie labelling and its exclusion by default;
-- false-join rejection.
+The literal contract says "use only information available at or before `audit_at`". Two isolated interpretations were compared, with everything else identical:
 
-`code/validate_output.py` re-reads the raw CSVs and shares no code with the pipeline (checks unchanged from v1; all pass).
+- **A (default):** a statement whose own timestamp is ≤ `audit_at`, inside a file whose manifest `captured_at` is after `audit_at`, may link records and inform state. It is never cited. Statements timestamped after `audit_at` are always ignored.
+- **B (`--strict-capture-cutoff`):** any file captured after `audit_at` is ignored entirely for that request: identity links, record ownership, tie filters, policy flags and state.
 
-## 8. Full-dataset run (518 cases) — internal checks only
+| Measure | A | B |
+|---|---|---|
+| Public exact-case / step F1 / field | 0.8750 / 0.9895 / 0.9578 | 0.6562 / 0.9624 / 0.8601 |
+| Public cases that differ from A | — | 8 (no status change) |
+| Eval cases that differ from A | — | 126 |
+| Eval status changes | — | 2 (case_218, case_219: COMPLETE → INCOMPLETE, completion guard) |
+| Eval output steps | 3,127 | 2,983 (−116 audit-record, −26 account, −2 legal-hold steps) |
+| Steps citing a file captured after `audit_at` | **0** | 0 |
 
-| Check | Result |
+**Public examples that conflict with the literal whole-file reading.** In 7 public answers, the gold includes a record whose attribution depends on pre-cutoff statements inside a late export. Two late exports are involved:
+- `evidence_02`: a snapshot bundle captured 2026-09-17 for a 2026-09-15 audit, whose inner snapshots predate the audit;
+- `evidence_06`: a log captured 2026-09-18 for a 2026-09-16 audit, whose lines predate the audit.
+
+The dependence is either direct or indirect:
+- **Direct (5 cases).** The record's subject identifier appears only in that late export: case_09 (`audit_record_4902`, `evidence_06`), case_24, 29 and 30 (audit records, `evidence_02`) and case_26 (`account_5684`, `evidence_02`).
+- **Indirect (2 cases).** The record itself is visible in pre-cutoff evidence, but the competing request's records are identified only in `evidence_02`, and that is what breaks the tie:
+  - case_25: `account_3136` becomes a case_25/case_26 tie once case_26's account is unknown;
+  - case_21: `analytics_5335` loses its clean-run tie-break against case_23.
+
+Under B, all 7 lose the record. The eighth difference (case_23) was already inexact.
+
+**Under A, measured:**
+- 116 direct links rest only on 16 late-captured files. Their state is used, but never cited.
+- 178 resource states rest only on late files. All 178 are *compliant* states, so none produces a finding:
+  - 11 are in COMPLETE cases. Each is cited to the audit-time account snapshot, which agrees.
+  - 167 are in INCOMPLETE cases, where verification carries no evidence.
+- No statement timestamped after `audit_at` is used anywhere (unit-tested; custom cust_02 and cust_08).
+
+**Recommendation (implemented).** Keep A. It is the narrowest reading consistent with every published example:
+- the cutoff applies to the time a statement describes;
+- the citation rule applies to the file's capture time;
+- B contradicts 7 of the 32 published answers.
+
+## 6. Finding citations and COMPLETE verification
+
+Every evidence-bearing step in the final 518-case output was checked by an independent script. The script re-reads the cited file's own statements about the step's resource, timed ≤ `audit_at`.
+
+| Step kind | Supported | Problems |
+|---|---|---|
+| Findings: the cited structured file shows the violation | 711 | 0 |
+| Findings: the cited screenshot/PDF row shows the violation (case_33, 34, 35, 39, 50, 52, 53, 55, 61, 63) | 10 | 0 |
+| COMPLETE verifications: the cited file states the compliant state explicitly | 426 (424 structured, 2 document) | 0 |
+| COMPLETE verifications: absence by omission from a snapshot of the same system | 41 | 0 |
+
+**Omission-based absence.** All 41 omission citations meet three conditions:
+- they come from SQL snapshots of the account store: a full customer-data snapshot (primary + replica tables), or an inventory whose `snapshot_scope` lists `account_service`;
+- the snapshot was captured ≤ 1 hour before `audit_at`;
+- the snapshot was taken after the workflow reported.
+
+None comes from a query-style export (point lookups), a partial batch inventory of another system, or an unrelated capture. On the public sample the same rule produces 3 COMPLETE omission verifications (case_01 and case_02 via `evidence_54`, case_31 via `evidence_51`), and all 3 match the published answer exactly. The older capture used for case_02 (40 h before audit) is the one the published answer cites.
+
+**Fallback fix.** When a violation's latest citable statement agreed with it, the finding cited that statement. Otherwise the second pass fell back to "the latest citable file showing the record present". For a REDACT/ANONYMIZE record, that file could show the record already redacted. The fallback now requires a citable statement that itself shows the violation. If none exists, the case is not claimed complete and no finding is written. This had no effect on the current output; it is unit-tested.
+
+## 7. Workflow metadata and weak resolvers
+
+- **Linkage only.** Deletion-worker events name resources but no subject. They are emitted in the request's reporting slot (accounts about 1 hour before `reported_at`). The primary-account result mirrors `reported_status` in all 24 public cases that have such an event. Both are used **only as linkage clues**.
+- **Never state evidence.** Neither `reported_status` nor `reported_result` is ever used as evidence of state. State comes only from evidence observations (`state.py`).
+- **Never reassigned.** Records tied by an identifier to another subject are never reassigned.
+
+Each resolver was switched off individually on the public sample, under the default policy:
+
+| Resolver | Public sample without it | Status |
+|---|---|---|
+| Run cadence (learned: 390 s, 449 s) | exact 0.8438 (−0.031), F1 0.9869 | Kept (weak). Resolves 4/4 public analytics ties correctly. |
+| Clean-run filter | exact 0.7500 (−0.125), F1 0.9788 | Kept (weak) |
+| Evidence-coverage consistency | exact 0.8125 (−0.063), F1 0.9842 | Kept (weak). Fixes the case_28/29 tie. |
+| Snapshot (bundle) record order | exact 0.8750 (±0) | **Off by default** (`--use-bundle-order`) |
+
+Never used: `case_id` numbering, event-time order versus subject order, and readback-log adjacency (which the public answer for case_03 contradicts).
+
+**Catalog conflicts (case_63).** The screenshot `evidence_60` shows `marketing_001` with another person's e-mail address, phone number and name; those identifiers are withheld from this report. They match no customer in `user_identities.csv` or `user_audit_log.csv`. The catalog row `activity_4008` links `marketing_001` to the requester. The general rule:
+- a catalog link is **rejected** when the record's own identifiers belong to a different *known* customer (custom cust_06);
+- it is **kept and flagged** when they match nobody (case_63).
+
+## 8. Custom evaluation cases
+
+All fixtures are fictional synthetic data built by `code/evaluation/custom_cases/build_custom_cases.py`:
+- They are stored under `<suite>/data/`.
+- They contain no challenge evidence, identifiers or hidden labels; a packaging check enforces this (§9).
+- The only challenge file they use is the policy `deletion_rules.csv`. It is not shipped and is copied in from the supplied `dataset/` at run time.
+- Expected answers were written by hand from the contract. They demonstrate behaviours; they are not evidence of hidden-answer accuracy.
+
+| Case | Failure mode | Expected behaviour | v1 | Second pass | Final |
+|---|---|---|---|---|---|
+| cust_01 | Historical email + `.jr` decoy | Only the old-email search hit is the subject's | pass | pass | pass |
+| cust_02 | Post-audit recreation | A later snapshot cannot change the answer: COMPLETE | pass | pass | pass |
+| cust_03 | Replica drift | A replica copy is a remaining record: INCOMPLETE | pass | pass | pass |
+| cust_04 | Spanish data-copy request refusing deletion | NOT_APPLICABLE `[]` | pass | pass | pass |
+| cust_05 | Tombstone with PII + active connector + restorable backup | Findings, then disable → block → redact, then 5 verifications | pass | pass | pass |
+| cust_06 | Catalog row vs another known customer's e-mail | False join rejected: COMPLETE | fail | pass | pass |
+| cust_07 | Partial (query) capture | Cannot override an explicit 200: INCOMPLETE | fail | pass | pass |
+| cust_08 | Post-cutoff evidence file | Pre-cutoff line links but is not cited; post-cutoff line ignored | pass | pass | pass |
+| cust_09/10 | Ambiguity resolved by exclusion | Second account attributed by exclusion (weak) | pass | pass | pass |
+| cust_11/12 (`suite_ambiguous`) | Genuine tie, no evidence | No account step asserted | fail | pass | pass |
+| **cust_13/14 (`suite_guard`, new)** | Tie where the audit snapshot still holds one of the two unattributed accounts | Neither request may be COMPLETE: INCOMPLETE, verification only, no invented finding | fail | **fail** (both COMPLETE) | **pass** |
+
+| Suite | v1 exact / F1 | Second pass exact / F1 | Final exact / F1 |
+|---|---|---|---|
+| `suite` (10) | 0.800 / 0.827 | 1.000 / 1.000 | **1.000 / 1.000** |
+| `suite_ambiguous` (2, no-guess) | 0.000 / 0.889 | 1.000 / 1.000 | **1.000 / 1.000** |
+| `suite_guard` (2, no-guess) | — | 0.000 / 0.000 | **1.000 / 1.000** |
+
+cust_13/14 encode a policy decision (do not claim completion that is not established), not an attribution. Exactly one of the two deletions is in fact complete.
+
+## 9. Packaging and reproducibility
+
+**Defect found.** The second-pass `code.zip` shipped `code/ghost_audit/evidence_cache/` (11 files of screenshot OCR text, derived from challenge evidence and containing fictional personal identifiers). Other copied material was also present:
+- a verbatim copy of `dataset/deletion_rules.csv` inside each custom fixture (in folders named `dataset/`);
+- one dataset e-mail address in a unit test;
+- one dataset e-mail address and OCR-derived identifiers in this report.
+
+`rapidocr-onnxruntime` was marked "optional" because the cache made it unnecessary.
+
+**Fixes:**
+- `package_submission.py`:
+  - excludes the OCR cache and every other cache;
+  - excludes any file byte-identical to a file in `dataset/`, and the fixtures' rules copy;
+  - **refuses to build** if a shipped text file contains a dataset identifier: names, emails, phones and email hashes from the identity files and audit log, plus emails found in evidence text, PDFs or the local OCR text.
+- Fixture folders were renamed `data/` and fixture paths were kept short. The longest archive path is 85 characters; a longer intermediate naming failed to extract under the Windows 260-character limit.
+- The test and report strings were replaced with synthetic or withheld values.
+- `requirements.txt` declares all runtime dependencies as required, pinned to the verified versions: `pypdf==6.16.2`, `rapidocr-onnxruntime==1.2.3`, `onnxruntime==1.31.0`, `opencv-python==5.0.0.93`, `numpy==2.2.5`. `anthropic` is listed as a separate optional install.
+- A missing OCR install now prints a `WARNING` per unreadable screenshot instead of failing silently.
+
+**Clean-environment reproduction (measured):**
+1. Built `code.zip`, extracted it into an empty directory, and confirmed that no OCR cache was present.
+2. Supplied `dataset/` separately.
+3. Created a fresh `python -m venv` (Python 3.13.0, Windows) and ran `pip install -r code/requirements.txt` from PyPI. It installed exactly the pinned versions.
+4. Results:
+   - `python code/main.py`: 518 rows, 94/94 evidence files parsed, 0 problems, 0 model calls. 43 s on the first run (fresh OCR), 2.2 s cached.
+   - `output.csv` SHA-256: `dd65f880…`, **byte-identical** to the submitted file. The freshly generated OCR text is identical to the original cache.
+   - `validate_output.py`: VALID. Public scorer: 0.8750 exact. All three custom suites: 1.000. 43/43 unit tests pass.
+   - Without RapidOCR (simulated), the run warns for all 11 screenshots and the output changes (`3de88c35…`). The dependency is genuinely required.
+
+**Archive inspection.** The final archive contains `README.md`, `code/` (source, tests, prompts, synthetic fixtures, reports, `last_run_usage.json` telemetry) and `evaluation/` (the two report copies). It contains no `dataset/`, OCR cache, dataset-identical file, secrets, `.env`, virtual environment, `__pycache__` or nested archive (§10 lists the exact checks).
+
+## 10. Unit tests, validator and full-dataset checks
+
+`python -m unittest discover -s code/tests` runs **43 tests, all passing**:
+- 15 first-pass tests;
+- 16 second-pass tests;
+- 12 final-review tests:
+  - the completion guard (tie candidate present, all candidates compliant, strong-link unknown state, weak-link unknown state, `suite_guard`);
+  - finding fallback citation (a mention is not enough);
+  - a violation visible only in a late file;
+  - strict-cutoff mode (public case_26, state from late files);
+  - the validator warning;
+  - packaging exclusions;
+  - shipped files containing no dataset identifier.
+
+`code/validate_output.py` re-reads the raw CSVs and shares no code with the pipeline.
+
+| Full 518-case check | Result |
 |---|---|
 | Rows / unique ids / sorted | 518 / 518 / yes |
-| `validate_output.py` | **VALID** (0 violations) |
-| Statuses | 153 COMPLETE, 355 INCOMPLETE, 10 NOT_APPLICABLE (identical to baseline) |
-| vs baseline | 0 status changes. 120 cases differ only in verification steps: 128 removed (99 account, 29 analytics, mostly coin-flip pairings) and 12 added (10 analytics, 2 account). |
-| Status dependence | All 508 deletion statuses depend only on direct links |
-| Steps | 3,127. On direct links: 2,877; strong: 35; weak: 215 (6.9%); unresolved: 0 |
-| Determinism | Re-runs byte-identical; the packaged code re-run from a clean extraction reproduces the same SHA-256 |
-| Evidence coverage | 94/94 files, no parser failures: 24 SQL, 28 JSON, 26 logs (7 formats), 1 text, 4 PDF, 11 PNG (cached OCR). This gives 2,893 observations. |
-| Catalog conflicts | 1 genuine (case_63, kept and flagged); 0 rejected |
+| `validate_output.py` | **VALID**, 0 violations, 0 warnings |
+| Statuses | 153 COMPLETE, 355 INCOMPLETE, 10 NOT_APPLICABLE (unchanged) |
+| Steps | 3,127: direct 2,877, strong 35, weak 215 (6.9%), unresolved 0 |
+| Citations | 1,188 evidence-bearing steps, all supported by the cited file (§6). 0 cite a file captured after `audit_at`. |
+| Determinism | Re-runs byte-identical, including from a clean extraction with fresh OCR (§9) |
+| Evidence coverage | 94/94 files: 24 SQL, 28 JSON, 26 logs (7 formats), 1 text, 4 PDF, 11 PNG. 2,893 observations. |
 
-## 9. Failures found and improvements made
+## 11. Failures found and improvements made
 
 **First pass** (summary):
 - seven-format log tokenization;
 - scope-only files;
-- workflow-slot linking (sample exact 0.34 → 0.66);
-- guessing restricted to accounts;
+- workflow-slot linking;
+- restricted guessing;
 - screenshot over-linking;
 - late-file citation fallback;
 - citation after `audit_at` (caught by the validator);
 - 404 rows counted as present;
-- clean-run filter (exact 0.75 → 0.84);
+- clean-run filter;
 - perfect-matching pairing;
 - multilingual refusals.
 
-**Second pass:**
+**Second pass** (#12–#21):
+- run cadence (case_03 exact);
+- evidence-coverage consistency;
+- query-versus-snapshot scopes (cust_07);
+- split override/pure-omission rule (case_02, case_05);
+- default `no-guess` policy (precision 1.0000);
+- catalog-conflict rejection (cust_06, case_63);
+- OCR glued-id split (case_50);
+- row-level screenshot indicators;
+- bundle order off by default;
+- closed sqlite connections.
+
+**Final review:**
 
 | # | Defect | Found by | Fix | Effect |
 |---|---|---|---|---|
-| 12 | Analytics ties paired by coin flip (case_03 lost) | Mismatch analysis | Learned run cadence | case_03 exact; 4/4 public analytics ties resolved |
-| 13 | Account tie case_191/192 paired against the evidence pattern | Citation inconsistency (case_191 cited an export that never mentions its account) | Evidence-coverage consistency (weak) | 5 eval account ties resolved; case_28/29 now resolved by evidence rather than luck |
-| 14 | Query exports treated as proof of absence | Assumption audit | Scope kinds (snapshot vs query) | cust_07 passes; case_191 citation fixed |
-| 15 | First attempt at the fix over-reached: a 30h window dropped case_02; using `reported_at` alone flipped case_05 to COMPLETE | Public regression | Split rule: override needs an audit-time capture; pure omission may use a post-workflow capture | Public metrics restored; case_05 correct |
-| 16 | Coin-flip ties written into `output.csv` as facts | Brief + ambiguity audit | Default policy `no-guess`; `full` and `corroborated` selectable; every link carries a confidence class | 0 unresolved steps in output; public F1 0.9817 → 0.9895, precision 1.0000 |
-| 17 | Catalog row accepted even when the record shows another known customer | cust_06 | Conflict check; reject false joins, flag unknowns | cust_06 passes; case_63 flagged |
-| 18 | OCR glued identifiers into e-mails (false conflict on case_50) | Conflict review | Split glued ids before e-mail extraction | case_50 unflagged |
-| 19 | Screenshot connector/backup state from page-level absence of words | Assumption audit | Row-level positive indicators | Unit-tested; case_39 and case_55 unchanged on positive evidence |
-| 20 | Snapshot-order resolver had no measurable value | Ablation | Off by default (`--use-bundle-order`) | 3 eval records left as recorded ambiguity |
-| 21 | Unclosed sqlite connections (ResourceWarnings) | `-W always` test run | Close connections | Clean test output |
+| 22 | COMPLETE could be claimed while an unattributed tie candidate still existed, or a corroborated record's state was unknown | COMPLETE-decision audit (§4) | Completion guard; verification-only INCOMPLETE; validator warning | 0 output changes; `suite_guard` false COMPLETE fixed |
+| 23 | A finding's fallback citation needed only a mention of the record | Citation audit (§6) | The fallback must show the violation | 0 output changes; unit-tested |
+| 24 | Strict cutoff interpretation undocumented and untestable | Cutoff audit (§5) | `--strict-capture-cutoff` comparison mode in linker, state and planner | Interpretation A justified by 7 public answers |
+| 25 | OCR cache (challenge-derived text) shipped in `code.zip`; OCR dependency marked optional | Packaging audit | Cache excluded; dependencies required and pinned; loud warning without OCR | Clean-venv reproduction byte-identical |
+| 26 | Dataset rules file copied into fixtures, plus dataset identifiers in a test and the report | Identifier scan of shipped files | Rules restored at run time; synthetic or withheld strings; packager refuses copies | 0 dataset identifiers in the archive |
+| 27 | Fixture path rename overflowed Windows MAX_PATH on extraction | Clean extraction | Short fixture paths (`data/`, ≤ 85 characters) | Extraction succeeds |
+| 28 | Fixture name coincided with a dataset customer name | Identifier scan | Renamed the fixture person | — |
 
-## 10. Limitations and decisions for review
+## 12. Limitations and remaining risks
 
-- **Unsupported references:** 3 public reference records (`account_004`, `audit_record_6645`, `audit_record_5569`) do not exist in participant data.
-- **Genuine ties:** under the default, 97 eval account events and 24 analytics events are not asserted, and 7 more are unassignable. Each case then lacks one verification step that the hidden answer probably contains.
-  - `--link-policy full` restores deterministic pairings. On the public sample it gives the same exact-case score (0.875), better field accuracy (0.968 vs 0.958), lower precision (0.9947) and lower F1 (0.9869).
-  - On the hidden set, `full` should gain exact-case matches on correctly guessed ties, at the cost of asserting about 50–67% wrong associations among them.
-  - **This choice is the user's.**
-- **case_63:** follows the uncontradicted catalog link. If the screenshot is taken as authoritative instead, the requester has no evidenced record at all.
-- **Hand-crafted screenshot/PDF cases (12):** each links only the catalogued record. There are no public examples for them.
+- **Unsupported references.** 3 public reference records (`account_004`, `audit_record_6645`, `audit_record_5569`) do not exist in participant data.
+- **Genuine ties.** Under the default, 97 eval account events and 24 analytics events are not asserted, and 7 more are unassignable. Each affected case lacks one verification step that the hidden answer probably contains. `full` would pair them, but most pairings in a 2- or 3-way tie would be wrong.
+- **Weak inferences.** 215 verification steps (203 cases) rest on workflow/timing heuristics (§3). They are validated on public ties, but not proven.
+- **Cutoff interpretation.** A is supported by the public answers. If the hidden grader applied B, about 144 steps in 126 cases would differ.
+- **case_63.** The uncontradicted catalog link is followed; a manual reviewer might treat the screenshot as authoritative.
+- **OCR versions.** Only the pinned OCR stack was verified. Other versions could change the 10 screenshot-backed cases.
+- **Hand-crafted screenshot/PDF cases (12).** There are no public examples of this kind.
 
 ## Reproduction
 
 ```bash
+python -m pip install -r code/requirements.txt
 python code/main.py --diagnostics diag.json --summary code/evaluation/diagnostics_summary.md
 python code/validate_output.py
 python code/evaluation/main.py --verbose
 python code/evaluation/main.py --link-policy full
+python code/evaluation/main.py --strict-capture-cutoff
 python code/evaluation/custom_cases/build_custom_cases.py
 python code/evaluation/main.py --custom --verbose
 python -m unittest discover -s code/tests
+python code/package_submission.py
 ```

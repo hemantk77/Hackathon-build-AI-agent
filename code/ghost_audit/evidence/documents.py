@@ -34,7 +34,7 @@ def pdf_text(path: Path) -> tuple[str, str]:
 def _ocr_engine():
     global _OCR_ENGINE
     if _OCR_ENGINE is None:
-        from rapidocr_onnxruntime import RapidOCR  # optional dependency
+        from rapidocr_onnxruntime import RapidOCR  # required (code/requirements.txt)
 
         _OCR_ENGINE = RapidOCR()
     return _OCR_ENGINE
@@ -60,7 +60,8 @@ def _ocr_lines(path: Path) -> list[str]:
 
 
 def image_text(path: Path, file_id: str) -> tuple[str, str]:
-    """Return (text, method); OCR output is cached next to the code keyed by file content hash."""
+    """Return (text, method). OCR output is cached locally keyed by file content hash; the cache is
+    derived from the evidence, so it is a run-time artifact and is never packaged."""
     data = path.read_bytes()
     digest = hashlib.sha256(data).hexdigest()[:16]
     cache = EVIDENCE_CACHE_DIR / f"{file_id}_{digest}.txt"

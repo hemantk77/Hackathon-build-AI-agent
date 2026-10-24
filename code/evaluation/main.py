@@ -98,13 +98,15 @@ def score(pred: dict, gold: dict) -> dict:
     }
 
 
-def run_and_score(data_dir: Path, requests: str, gold_path: Path, verbose: bool, link_policy: str | None = None) -> dict:
+def run_and_score(data_dir: Path, requests: str, gold_path: Path, verbose: bool, link_policy: str | None = None,
+                  strict_capture_cutoff: bool = False) -> dict:
     from ghost_audit.output import write_output
     from ghost_audit.pipeline import run_pipeline
 
     from ghost_audit.pipeline import DEFAULT_LINK_POLICY
 
-    run = run_pipeline(data_dir, requests, link_policy=link_policy or DEFAULT_LINK_POLICY)
+    run = run_pipeline(data_dir, requests, link_policy=link_policy or DEFAULT_LINK_POLICY,
+                       strict_capture_cutoff=strict_capture_cutoff)
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "pred.csv"
         write_output(out, [(r.case_id, r.status, r.steps) for r in run.results])
@@ -125,6 +127,16 @@ def run_and_score(data_dir: Path, requests: str, gold_path: Path, verbose: bool,
     return result
 
 
+def _ensure_fixture_rules(root: Path) -> None:
+    """The fixtures use the challenge's own deletion_rules.csv, which code.zip does not ship."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("build_custom_cases", root / "build_custom_cases.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.ensure_rules()
+
+
 def print_summary(title: str, result: dict) -> None:
     print(f"== {title} ({result['cases']} cases)")
     for k in ("status_accuracy", "exact_case_accuracy", "step_precision", "step_recall", "step_f1",
@@ -141,6 +153,8 @@ def main(argv=None) -> int:
     ap.add_argument("--json", help="write metrics JSON here")
     ap.add_argument("--link-policy", default=None, choices=["no-guess", "full", "corroborated"],
                     help="link policy for pipeline runs (default: the production default)")
+    ap.add_argument("--strict-capture-cutoff", action="store_true",
+                    help="ignore files exported after audit_at even for linking/state (comparison mode)")
     args = ap.parse_args(argv)
 
     repo = CODE_DIR.parent
@@ -150,19 +164,20 @@ def main(argv=None) -> int:
         print_summary("files", results["files"])
     elif args.custom:
         root = Path(__file__).resolve().parent / "custom_cases"
-        for case_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        _ensure_fixture_rules(root)
+        for case_dir in sorted(p for p in root.iterdir() if (p / "data").is_dir()):
             policy_file = case_dir / "link_policy.txt"
             from ghost_audit.pipeline import DEFAULT_LINK_POLICY
 
             policy = (policy_file.read_text(encoding="utf-8").strip() if policy_file.exists()
                       else args.link_policy or DEFAULT_LINK_POLICY)
-            res = run_and_score(case_dir / "dataset", "deletion_requests.csv", case_dir / "expected_output.csv",
-                                args.verbose, policy)
+            res = run_and_score(case_dir / "data", "deletion_requests.csv", case_dir / "expected_output.csv",
+                                args.verbose, policy, args.strict_capture_cutoff)
             results[case_dir.name] = res
             print_summary(f"{case_dir.name} (link policy {policy})", res)
     else:
         res = run_and_score(repo / "dataset", "sample_deletion_requests.csv", repo / "dataset" / "sample_output.csv",
-                            args.verbose, args.link_policy)
+                            args.verbose, args.link_policy, args.strict_capture_cutoff)
         results["public_sample"] = res
         print_summary("public sample", res)
     if args.json:

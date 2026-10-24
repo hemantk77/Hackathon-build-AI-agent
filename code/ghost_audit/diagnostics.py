@@ -33,6 +33,8 @@ def summary(run) -> dict:
     cases_with_heur_steps = 0
     late_only = omission = override = 0
     conflicts = []
+    guard = Counter()  # completion guard: why completion could not be established
+    ties_all_compliant = 0
     for r in run.results:
         for res in r.resources:
             links[res["link"]["confidence"]] += 1
@@ -44,6 +46,10 @@ def summary(run) -> dict:
             if res["link"]["conflicts"]:
                 conflicts.append({"case_id": r.case_id, "resource_id": res["resource_id"],
                                   "conflicts": res["link"]["conflicts"]})
+        for n in r.notes:
+            if n.startswith("completion not established: "):
+                guard[n.split(": ", 2)[2].split(" (")[0]] += 1
+        ties_all_compliant += any(n.startswith("unattributed tie: all") for n in r.notes)
         steps.update(r.step_confidence)
         if r.status != "NOT_APPLICABLE":
             status_rel[(r.status, r.status_relies_on)] += 1
@@ -76,6 +82,10 @@ def summary(run) -> dict:
         "states_by_omission": omission,
         "states_by_omission_override": override,
         "states_resting_only_on_post_cutoff_files": late_only,
+        "completion_guard_blocks": dict(guard),
+        "cases_blocked_by_completion_guard": sum(
+            any(n.startswith("completion not established") for n in r.notes) for r in run.results),
+        "cases_with_unattributed_tie_all_candidates_compliant": ties_all_compliant,
         "catalog_conflicts": conflicts,
         "rejected_catalog_links": [d for d in run.linker_diagnostics if d.get("basis") == "catalog_rejected"],
         "evidence_coverage": {"files": cov["files"], "by_type": cov["by_type"], "parsed_ok": cov["ok_by_type"],
@@ -100,6 +110,9 @@ def summary_markdown(s: dict) -> str:
     lines += ["", f"- Learned run cadence (s): {s['learned_run_cadence_seconds']}",
               f"- States by omission: {s['states_by_omission']}; omission overrides: {s['states_by_omission_override']}",
               f"- States resting only on files captured after audit_at: {s['states_resting_only_on_post_cutoff_files']}",
+              f"- Completion guard: {s['cases_blocked_by_completion_guard']} cases not claimed COMPLETE "
+              f"({s['completion_guard_blocks'] or 'no blocks'}); cases whose unattributed tie had every candidate "
+              f"proven compliant: {s['cases_with_unattributed_tie_all_candidates_compliant']}",
               f"- Catalog conflicts: {len(s['catalog_conflicts'])}; rejected catalog links: {len(s['rejected_catalog_links'])}",
               f"- Evidence: {s['evidence_coverage']['files']} files, problems: {len(s['evidence_coverage']['problems'])}, "
               f"observations: {s['evidence_coverage']['observations']}"]
