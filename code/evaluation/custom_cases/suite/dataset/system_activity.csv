@@ -1,0 +1,7 @@
+activity_id,event_time,event_type,source_system,target_system,resource_id,reported_result,details
+activity_9001,2026-05-03T11:00:00Z,DELETE_RECORD,deletion_worker,account_service,account_9101,SUCCESS,Deletion worker submitted primary profile account_9101 to account_service.
+activity_9002,2026-05-13T11:00:00Z,DELETE_RECORD,deletion_worker,account_service,account_9201,SUCCESS,Deletion worker submitted primary profile account_9201 to account_service.
+activity_9003,2026-05-23T11:00:00Z,DELETE_RECORD,deletion_worker,account_service,account_9301,FAILED,Deletion worker submitted primary profile account_9301 to account_service.
+activity_9004,2026-06-03T11:00:00Z,CLASSIFY_REQUEST,privacy_intake,privacy_case_management,account_9401,SUCCESS,Privacy intake classified request for account_9401 as non-deletion; no destructive action was authorized.
+activity_9005,2026-06-13T11:00:00Z,DELETE_RECORD,deletion_worker,account_service,account_9501,SUCCESS,Deletion worker submitted primary profile account_9501 to account_service.
+activity_9006,2026-06-13T11:45:00Z,DISABLE_DATA_FLOW,deletion_worker,integration_service,data_flow_9501,SUCCESS,Policy action completed for data_flow_9501.

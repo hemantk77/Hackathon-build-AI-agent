@@ -1,0 +1,9 @@
+# Required: PDF text extraction (falls back to the `pdftotext` binary if missing).
+pypdf>=4.0
+
+# Optional: only needed to re-run OCR when code/ghost_audit/evidence_cache/ lacks a screenshot's text.
+# The cache for the supplied 11 screenshots is shipped, so a normal run does not import it.
+rapidocr-onnxruntime>=1.2
+
+# Optional: only for `python code/main.py --llm` (off by default; needs ANTHROPIC_API_KEY).
+anthropic

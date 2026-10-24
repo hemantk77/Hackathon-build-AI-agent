@@ -1,0 +1,8 @@
+{
+  "requests_file": "deletion_requests.csv",
+  "cases": 518,
+  "llm_enabled": false,
+  "model_calls": 0,
+  "per_model": {},
+  "calls": []
+}

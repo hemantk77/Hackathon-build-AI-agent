@@ -1,0 +1,30 @@
+Northstar Shop  |  CustomerDownloadCenter  |  Search exports...  |  Production Help  |  CD
+Northstar Shop/Customer Download Center/ Data exports
+Home  |  Data exports  |  4jobs  |  Filter  |  Export  |  Actions
+Orders  |  Create and manage customer download packages
+All exports  |  Ready  |  Processing  |  Expired
+Customers
+Data exports  |  Ready  |  Processing  |  Created today  |  Downloads today
+Products
+Marketing  |  All exports  |  Updated moments ago : 4 records  |  export_1260
+Analytics  |  Export ID  |  Filename  |  Owner  |  Status  |  Created  |  Owner  |  ingrid.dahl@outlook.com
+Settings  |  export_1261  |  customer_export_1261.zip  |  marcus.lee@northstar.shop  |  Collecting  |  20 Jun 14:18 UTC  |  Created  |  18 Jun 2026 06:42UTC
+export_1260  |  customer_export_1260.zip  |  ingrid.dahl@outlook.com  |  Ready  |  18 Jun06:42UTC  |  Expires  |  25Jun202606:42UTC
+Size  |  18.4 MB
+export_1259  |  customer_export_1259.zip  |  sara.kim@northstar.shop  |  Packaging  |  17 Jun 11:03 UTC
+Checksum  |  SHA-256 -41ca09...
+export_1258  |  customer_export_1258.zip  |  daniel.park@northstar.shop  |  Ready  |  16 Jun 09:27UTC
+Download count
+Included  |  Profile · Orders · Saved addresses
+Activity
+06:46
+Ready for download
+06:45
+Package created
+06:43
+Collecting customer records
+06:42
+Export requested
+Customer Download Center
+Production workspace
+build 2026.10.4
