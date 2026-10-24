@@ -18,7 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ghost_audit.config import DEFAULT_DATA_DIR, DEFAULT_OUTPUT  # noqa: E402
 from ghost_audit.output import write_output  # noqa: E402
-from ghost_audit.pipeline import run_pipeline  # noqa: E402
+from ghost_audit.diagnostics import case_diagnostics, summary, summary_markdown  # noqa: E402
+from ghost_audit.pipeline import DEFAULT_LINK_POLICY, LINK_POLICIES, run_pipeline  # noqa: E402
 
 
 def main(argv=None) -> int:
@@ -27,6 +28,11 @@ def main(argv=None) -> int:
     parser.add_argument("--requests", default="deletion_requests.csv", help="request CSV inside --data-dir")
     parser.add_argument("--out", default=str(DEFAULT_OUTPUT), help="output CSV path")
     parser.add_argument("--diagnostics", default="", help="optional JSON file for per-case diagnostics")
+    parser.add_argument("--summary", default="", help="optional Markdown file with the run diagnostics summary")
+    parser.add_argument("--link-policy", default=DEFAULT_LINK_POLICY, choices=sorted(LINK_POLICIES),
+                        help="which link confidence classes may produce steps (default: %(default)s)")
+    parser.add_argument("--use-bundle-order", action="store_true",
+                        help="also break ties by record order inside snapshot bundles (weak, off by default)")
     parser.add_argument("--llm", action="store_true", help="enable optional Claude fallback (needs ANTHROPIC_API_KEY)")
     args = parser.parse_args(argv)
 
@@ -39,7 +45,8 @@ def main(argv=None) -> int:
             print("--llm requested but ANTHROPIC_API_KEY is not set; continuing deterministically.", file=sys.stderr)
 
     started = time.time()
-    run = run_pipeline(Path(args.data_dir), args.requests, llm=llm)
+    run = run_pipeline(Path(args.data_dir), args.requests, llm=llm, link_policy=args.link_policy,
+                       use_bundle_order=args.use_bundle_order)
     rows = [(r.case_id, r.status, r.steps) for r in run.results]
     write_output(Path(args.out), rows)
 
@@ -52,23 +59,25 @@ def main(argv=None) -> int:
     print(f"evidence files: {cov['files']} parsed_ok={sum(cov['ok_by_type'].values())} "
           f"observations={cov['observations']} problems={len(cov['problems'])}")
     print(f"model calls: {len(run.llm_usage)}")
-    # Real usage telemetry for the run (summarized by hand in code/evaluation/usage_report.md).
-    from ghost_audit.llm import estimate_cost
+    summ = summary(run)
+    print(f"link policy: {args.link_policy}; output steps on weak/unresolved links: "
+          f"{summ['share_of_steps_on_heuristics']:.1%}")
+    if args.requests == "deletion_requests.csv" and Path(args.data_dir).resolve() == DEFAULT_DATA_DIR.resolve():
+        # Real usage telemetry of the full run (summarized in code/evaluation/usage_report.md).
+        from ghost_audit.llm import estimate_cost
 
-    usage_path = Path(__file__).resolve().parent / "evaluation" / "last_run_usage.json"
-    usage_path.write_text(json.dumps({
-        "requests_file": args.requests, "cases": len(rows), "llm_enabled": llm is not None,
-        "model_calls": len(run.llm_usage), "per_model": estimate_cost(run.llm_usage), "calls": run.llm_usage,
-    }, indent=2), encoding="utf-8")
+        usage_path = Path(__file__).resolve().parent / "evaluation" / "last_run_usage.json"
+        usage_path.write_text(json.dumps({
+            "requests_file": args.requests, "cases": len(rows), "llm_enabled": llm is not None,
+            "link_policy": args.link_policy, "model_calls": len(run.llm_usage),
+            "per_model": estimate_cost(run.llm_usage), "calls": run.llm_usage,
+        }, indent=2), encoding="utf-8")
     if args.diagnostics:
-        payload = {
-            "coverage": cov,
-            "linker": run.linker_diagnostics,
-            "cases": {r.case_id: {"status": r.status, "resources": r.resources, "notes": r.notes,
-                                  "authorization": run.auth.get(r.case_id)} for r in run.results},
-            "llm_usage": run.llm_usage,
-        }
+        payload = {"summary": summ, "cases": case_diagnostics(run), "workflow_events": run.event_log,
+                   "linker_notes": run.linker_diagnostics, "llm_usage": run.llm_usage}
         Path(args.diagnostics).write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    if args.summary:
+        Path(args.summary).write_text(summary_markdown(summ), encoding="utf-8")
     return 0
 
 

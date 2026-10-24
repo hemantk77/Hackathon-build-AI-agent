@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .config import OPERATIONS, TREATMENT_OPS
-from .linker import CaseContext, Link
+from .linker import CONFIDENCE_RANK, CaseContext, Link
 from .output import order_steps
 from .policy import Policy
 from .state import ResourceState, category_of, reconstruct
@@ -16,14 +16,20 @@ class CaseResult:
     case_id: str
     status: str
     steps: list
-    resources: list = field(default_factory=list)  # diagnostics: (resource, category, treatment, state)
+    resources: list = field(default_factory=list)  # per-resource diagnostic dicts
     notes: list = field(default_factory=list)
+    status_relies_on: str = "direct"  # weakest link confidence the status decision depends on
+    step_confidence: list = field(default_factory=list)  # link confidence of each output step
 
 
 def _step(phase_op: str, system: str, resource: str, evidence: str) -> dict:
     phase, state = OPERATIONS[phase_op]
     return {"step_no": 0, "phase": phase, "system_id": system, "resource_id": resource,
             "operation": phase_op, "state": state, "evidence_id": evidence}
+
+
+def _iso(value):
+    return value.isoformat() if hasattr(value, "isoformat") else value
 
 
 class Planner:
@@ -46,7 +52,7 @@ class Planner:
                     latest_flags.update(o.flags)
             decision = self.policy.decide(category, latest_flags, case.audit_at)
             state = reconstruct(rid, link.system, decision.treatment, category, observations, self.scopes,
-                                case.audit_at, self.file_captured)
+                                case.audit_at, self.file_captured, since=case.reported_at)
             states.append((link, decision, state))
 
         violations = [(l, d, s) for l, d, s in states if s.compliant is False]
@@ -66,6 +72,7 @@ class Planner:
             for link, decision, state in states:
                 verify = TREATMENT_OPS[decision.treatment][2]
                 steps.append(_step(verify, link.system, link.resource_id, ""))
+            weakest_needed = max((l.confidence for l, _, _ in violations), key=lambda c: CONFIDENCE_RANK[c])
         else:
             status = "COMPLETE"
             for link, decision, state in states:
@@ -76,9 +83,35 @@ class Planner:
                 if state.present is False and decision.treatment in ("REDACT", "ANONYMIZE"):
                     verify = "VERIFY_RECORD_ABSENT"
                 steps.append(_step(verify, link.system, link.resource_id, state.citation))
-        resources = [(l.resource_id, l.basis, d.category, d.treatment, s.compliant, s.citation)
-                     for l, d, s in states]
-        return CaseResult(case.case_id, status, order_steps(steps), resources, notes)
+            weakest_needed = "direct"  # no violation: removing inferred links cannot create one
+        ordered = order_steps(steps)
+        confidence_of = {l.resource_id: l.confidence for l, _, _ in states}
+        resources = [self._describe(l, d, s, case) for l, d, s in states]
+        for l, _, _ in states:
+            if l.conflicts:
+                notes.extend(l.conflicts)
+        return CaseResult(case.case_id, status, ordered, resources, notes,
+                          status_relies_on=weakest_needed,
+                          step_confidence=[confidence_of.get(s["resource_id"], "direct") for s in ordered])
+
+    def _describe(self, link: Link, decision, state: ResourceState, case: CaseContext) -> dict:
+        deciding = state.deciding
+        return {
+            "resource_id": link.resource_id, "system_id": link.system,
+            "link": {"confidence": link.confidence, "method": link.method, "basis": link.basis,
+                     "evidence_or_activity": link.detail[:6], "candidates": link.candidates,
+                     "conflicts": link.conflicts},
+            "policy": {"category": decision.category, "rule_id": decision.rule_id, "required_action": decision.action,
+                       "treatment": decision.treatment, "condition": decision.note},
+            "state_at_audit": {
+                "compliant": state.compliant, "present": state.present, "basis": state.basis,
+                "deciding_file": getattr(deciding, "file_id", None),
+                "deciding_time": _iso(getattr(deciding, "obs_time", None)),
+                "citation": state.citation, "rests_only_on_files_captured_after_audit": state.late_only,
+                "trail": [{"file_id": f, "captured_at": _iso(c), "observed_at": _iso(t), "kind": k, "compliant": v}
+                          for f, c, t, k, v in state.trail[-6:]],
+            },
+        }
 
     def _fallback_evidence(self, link: Link, audit_at) -> str:
         """Latest citable (captured <= audit_at) evidence that mentions the record at all."""

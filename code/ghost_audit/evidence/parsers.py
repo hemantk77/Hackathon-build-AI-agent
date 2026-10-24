@@ -51,6 +51,7 @@ def parse_sql(path: Path, file_id: str, captured_at) -> ParseResult:
         con.executescript(text)
     except sqlite3.Error as exc:  # pragma: no cover - reported in coverage
         res.notes.append(f"sqlite error: {exc}")
+        con.close()
         return res
     con.row_factory = sqlite3.Row
     tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
@@ -111,6 +112,7 @@ def parse_sql(path: Path, file_id: str, captured_at) -> ParseResult:
                 continue
             res.scopes.append(Scope(file_id, captured_at, scope_times.get(system) or snap_time, system, table,
                                     listed_by_system.get(system, set())))
+    con.close()
     return res
 
 
@@ -151,7 +153,7 @@ def parse_json(path: Path, file_id: str, captured_at) -> ParseResult:
                         res.observations.append(obs)
                         if obs.present:
                             listed.add(obs.resource_id)
-                res.scopes.append(Scope(file_id, captured_at, top_time, system, coll, listed))
+                res.scopes.append(Scope(file_id, captured_at, top_time, system, coll, listed, kind="query"))
         return res
 
     if "snapshots" in data:

@@ -1,12 +1,15 @@
 # Usage Report — Final Full-Dataset Run
 
-The final `output.csv` (518 cases) was produced by:
+The final `output.csv` (518 cases, SHA-256 `dd65f880…`) was produced by the second-pass implementation with:
 
 ```bash
 python code/main.py
 ```
 
-It is deterministic and ran without the optional `--llm` flag. The run's own telemetry, written by `code/main.py` to `code/evaluation/last_run_usage.json`, records `model_calls: 0`.
+- **Default settings:** link policy `no-guess`, bundle-order resolver off, no `--llm` flag.
+- **Determinism:** the run is deterministic.
+- **Telemetry:** the run's own record, written by `code/main.py` to `code/evaluation/last_run_usage.json`, shows `model_calls: 0` and `llm_enabled: false`.
+- **Comparison runs:** the `full` and `corroborated` link-policy runs, the evaluation runs and the custom suites made no model calls either.
 
 ## Production inference usage (the run that produced `output.csv`)
 

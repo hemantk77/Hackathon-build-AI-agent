@@ -104,7 +104,12 @@ class Observation:
 
 @dataclass
 class Scope:
-    """A complete capture of one system/collection: unlisted resources were absent."""
+    """A captured system/collection and the records it listed as present.
+
+    kind="snapshot": a point-in-time capture of a store (SQL tables, bundle collections); a record
+    it does not list was absent at capture time. kind="query": a set of point lookups (service
+    exports); a record that was never looked up says nothing, so it cannot prove absence.
+    """
 
     file_id: str
     captured_at: datetime
@@ -112,6 +117,7 @@ class Scope:
     system: str
     store: str
     listed: set = field(default_factory=set)
+    kind: str = "snapshot"
 
 
 @dataclass

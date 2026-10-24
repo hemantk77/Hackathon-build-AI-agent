@@ -1,11 +1,20 @@
 """Reconstruct each resource's state at a case's audit_at cutoff.
 
-Rules:
-* only observations with obs_time <= audit_at are used;
-* the latest observation that says something about the required treatment decides;
-* a copy in any replica table counts as present (replication drift);
-* absence may be inferred from a captured account scope that does not list the record;
-* a citation must come from a file whose manifest captured_at <= audit_at.
+Rules (and their status as requirement vs. inference):
+* [requirement] only statements whose own time is <= audit_at are used; later events never change
+  the answer;
+* [requirement] a citation must come from a file whose manifest captured_at <= audit_at;
+* [inference, confirmed by public case_09] a line timestamped before audit_at inside a file exported
+  after audit_at may inform state and linking, but can never be cited;
+* the latest observation that speaks to the required treatment decides; at one snapshot instant
+  any surviving replica copy is a violation (replication drift);
+* [inference] absence by omission, two strengths. Query-style lookups (service exports) never prove
+  absence. (a) Override: a snapshot of the account store taken for this audit (file captured within
+  30h before audit_at) that omits the account overrides an older explicit "present" statement.
+  (b) Pure omission, only for an account with no explicit statement at all: the latest snapshot taken
+  after the workflow reported (reported_at <= capture <= audit_at) that omits it is recorded as weak
+  evidence of absence. A batch-filtered capture cannot override an explicit observation (public
+  case_05: present in the account replica, merely unlisted in a later inventory of another batch).
 """
 
 from __future__ import annotations
@@ -17,6 +26,7 @@ from datetime import datetime, timedelta
 from .evidence.model import Observation, Scope, is_blank
 
 DIRECT_REF_FIELDS = ("customer_reference", "user_id", "subject_selector")
+AUDIT_CAPTURE_WINDOW = timedelta(hours=30)
 
 
 @dataclass
@@ -29,6 +39,9 @@ class ResourceState:
     deciding: Observation | Scope | None = None
     citation: str = ""  # file_id usable as evidence (captured <= audit_at)
     history: list = field(default_factory=list)
+    basis: str = "unknown"  # observation | omission | omission_override | unknown
+    late_only: bool = False  # verdict rests only on files captured after audit_at
+    trail: list = field(default_factory=list)  # (file_id, captured_at, obs_time, kind, verdict)
 
 
 def category_of(observations: list[Observation], system: str) -> str:
@@ -84,26 +97,44 @@ def evaluate(obs: Observation, treatment: str) -> bool | None:
     return None
 
 
+def audit_capture(system: str, scopes: list[Scope], audit_at: datetime, file_captured: dict,
+                  since: datetime | None = None) -> Scope | None:
+    """Latest snapshot-type capture of `system` with obs_time >= `since` and file captured <= audit_at.
+    Pass since=audit_at - AUDIT_CAPTURE_WINDOW for the capture taken for this audit."""
+    captured = [s for s in scopes if s.system == system and s.kind == "snapshot" and s.obs_time <= audit_at
+                and file_captured.get(s.file_id) and file_captured[s.file_id] <= audit_at
+                and (since is None or s.obs_time >= since)]
+    if not captured:
+        return None
+    return max(captured, key=lambda s: (s.obs_time, file_captured[s.file_id]))
+
+
 def reconstruct(resource_id: str, system: str, treatment: str, category: str, observations: list[Observation],
-                scopes: list[Scope], audit_at: datetime, file_captured: dict) -> ResourceState:
+                scopes: list[Scope], audit_at: datetime, file_captured: dict,
+                since: datetime | None = None) -> ResourceState:
     usable = [o for o in observations if o.obs_time <= audit_at]
     judged = [(o, evaluate(o, treatment)) for o in usable]
     judged = [(o, v) for o, v in judged if v is not None]
+    trail = [(o.file_id, file_captured.get(o.file_id), o.obs_time, o.kind, v) for o, v in judged]
     present = None
     for o in reversed(usable):
         if o.present is not None:
             present = o.present
             break
-    if judged and treatment == "DELETE" and system == "account_service":
-        # The account-store capture taken for this audit (within 30h of the cutoff) is the
-        # latest word on whether the profile still exists; it overrides older observations.
-        scope = _latest_account_scope(resource_id, system, scopes, audit_at, file_captured)
-        if scope is not None and scope.obs_time > judged[-1][0].obs_time and \
-                file_captured[scope.file_id] >= audit_at - 30 * _HOUR:
-            verdict = resource_id not in scope.listed
-            if verdict != judged[-1][1]:  # only a contradiction changes the answer
-                return ResourceState(resource_id, system, category, verdict, not verdict, scope,
-                                     scope.file_id, [o.file_id for o, _ in judged] + [scope.file_id])
+    account_delete = treatment == "DELETE" and system == "account_service"
+    capture = audit_capture(system, scopes, audit_at, file_captured,
+                            audit_at - AUDIT_CAPTURE_WINDOW) if account_delete else None
+    post_workflow = audit_capture(system, scopes, audit_at, file_captured, since) if account_delete else None
+
+    if judged and capture is not None and capture.obs_time > judged[-1][0].obs_time:
+        # The audit-time capture of the account store is newer than every explicit statement; it
+        # changes the answer only when it contradicts the latest one.
+        verdict = resource_id not in capture.listed
+        if verdict != judged[-1][1]:
+            return ResourceState(resource_id, system, category, verdict, not verdict, capture, capture.file_id,
+                                 [o.file_id for o, _ in judged] + [capture.file_id], "omission_override",
+                                 False, trail + [(capture.file_id, file_captured.get(capture.file_id),
+                                                  capture.obs_time, "scope", verdict)])
     if judged:
         last_time = judged[-1][0].obs_time
         same_time = [(o, v) for o, v in judged if o.obs_time == last_time]
@@ -113,29 +144,16 @@ def reconstruct(resource_id: str, system: str, treatment: str, category: str, ob
         citable = [o for o, v in judged if v == verdict and file_captured.get(o.file_id) and
                    file_captured[o.file_id] <= audit_at]
         citation = citable[-1].file_id if citable else ""
-        if not citation and verdict and treatment == "DELETE" and system == "account_service":
-            scope = _latest_account_scope(resource_id, system, scopes, audit_at, file_captured)
-            if scope is not None and resource_id not in scope.listed and scope.obs_time >= deciding.obs_time - _DAY:
-                citation = scope.file_id
+        if not citation and verdict and capture is not None and resource_id not in capture.listed:
+            citation = capture.file_id  # explicit 404 only in a late export; audit capture agrees
+        late_only = not any(file_captured.get(o.file_id) and file_captured[o.file_id] <= audit_at
+                            for o, _ in judged)
         return ResourceState(resource_id, system, category, verdict, present, deciding, citation,
-                             [o.file_id for o, _ in judged])
-    if treatment == "DELETE" and system == "account_service":
-        latest = _latest_account_scope(resource_id, system, scopes, audit_at, file_captured)
-        if latest is not None:
-            verdict = resource_id not in latest.listed
-            return ResourceState(resource_id, system, category, verdict, not verdict, latest,
-                                 latest.file_id if verdict else "", [latest.file_id])
-    return ResourceState(resource_id, system, category, None, present, None, "", [])
-
-
-_DAY = timedelta(days=1)
-_HOUR = timedelta(hours=1)
-
-
-def _latest_account_scope(resource_id, system, scopes, audit_at, file_captured):
-    """Most recent citable capture of the account store (absence by omission)."""
-    captured = [s for s in scopes if s.system == system and s.obs_time <= audit_at and
-                file_captured.get(s.file_id) and file_captured[s.file_id] <= audit_at]
-    if not captured:
-        return None
-    return max(captured, key=lambda s: (s.obs_time, file_captured[s.file_id]))
+                             [o.file_id for o, _ in judged], "observation", late_only, trail)
+    if post_workflow is not None:
+        verdict = resource_id not in post_workflow.listed
+        return ResourceState(resource_id, system, category, verdict, not verdict, post_workflow,
+                             post_workflow.file_id if verdict else "", [post_workflow.file_id], "omission", False,
+                             [(post_workflow.file_id, file_captured.get(post_workflow.file_id),
+                               post_workflow.obs_time, "scope", verdict)])
+    return ResourceState(resource_id, system, category, None, present, None, "", [], "unknown", False, trail)

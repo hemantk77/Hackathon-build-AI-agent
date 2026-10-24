@@ -534,3 +534,230 @@ branch=unknown (not a git repository)
 repo_root=C:\Users\heman\Dropbox\PC\Desktop\Programming 19\Hackathon-build-AI-agent
 worktree=main
 parent_agent=none
+
+## [2026-10-24T15:15:44Z] Second-pass forensic audit, ambiguity handling and resubmission
+
+User Prompt (verbatim, secrets redacted):
+Second-Pass Forensic Audit and Score Improvement — Ghost Data Still Exists
+The initial implementation is complete, but your own final report identifies unresolved identity matches, missing reference records, conflicting evidence, and heuristic assumptions.
+Do not declare the project finished yet.
+Your task now is to conduct a rigorous second-pass audit of the existing implementation, identify the highest-impact errors, improve the underlying logic, and regenerate the final submission artifacts.
+Preserve the existing working implementation, public-sample regression tests, diagnostics, and Git/user changes. Do not rewrite the project from scratch unless a specific defect justifies it.
+1. Start with a verified baseline
+Read `AGENTS.md`, `README.md`, `problem_statement.md`, and the current source, tests, evaluation reports, diagnostics, and output.
+Record the current output hash and the baseline measurements before making changes.
+Re-run:
+
+* `python code/main.py`
+* `python code/validate_output.py`
+* `python code/evaluation/main.py --verbose`
+* `python code/evaluation/main.py --custom`
+* `python -m unittest discover -s code/tests`
+
+Use the actual run results, not the previous response as proof.
+Preserve the required append-only `log.txt` format and follow all existing project instructions.
+2. Investigate all five exact-case sample failures
+The previous report shows 100% status accuracy, 84.4% exact-case accuracy, 98.2% step F1, and 96.7% field accuracy on the 32 public examples.
+Identify every public case whose complete answer does not match `dataset/sample_output.csv`.
+For each mismatch, produce a detailed comparison showing:
+
+* Expected versus predicted status.
+* Missing and extra steps.
+* Incorrect fields.
+* Evidence-reference differences.
+* Ordering and numbering differences.
+* The underlying inference or implementation defect.
+* The smallest generalisable correction.
+
+Do not hardcode case IDs, expected answers, or special-case rules in production code.
+Improve the underlying logic until the public suite matches as closely as the available participant-facing evidence and formal contract allow. If a mismatch cannot be resolved, document precisely why rather than fabricating certainty.
+Report exact-case accuracy and step-level metrics separately. Do not let a high aggregate F1 conceal remaining failures.
+3. Audit every ambiguous identity and resource assignment
+The previous report admits that 105 account matches and 36 anonymized-analytics matches are coin-flip guesses, while 47 anonymization events remain unassigned.
+This is the highest-priority investigation.
+For every affected match, distinguish:
+
+* Direct evidence: an exact identifier or explicit, corroborated resource-to-subject link.
+* Strong inference: a unique match supported by multiple independent constraints.
+* Weak inference: a timing, ordering, or workflow-result heuristic.
+* Unresolved ambiguity: multiple candidates remain equally plausible.
+
+Investigate each assignment using all relevant participant-facing information:
+
+* Current and historical emails, phones, and email hashes.
+* `user_audit_log.csv`.
+* Explicit resource-identity link events.
+* Resource references in evidence files.
+* Cross-system resource relationships.
+* SQL snapshots and replicas.
+* Record types and policy rules.
+* Event timestamps, evidence capture timestamps, and the `audit_at` cutoff.
+* Global assignment constraints, but only where the constraints actually establish a unique mapping.
+
+Build a candidate graph or equivalent diagnostic representation for ambiguous assignments. Determine whether additional independent evidence eliminates competing candidates.
+Do not label an assignment uniquely identified merely because a global matching algorithm returns one solution under arbitrary tie-breaking.
+Specific requirement: workflow-slot assignment
+Audit the logic that associates accounts with cases using the time difference from `reported_at`, a matching workflow result, and exclusivity across cases.
+Determine whether those signals establish a legitimate subject-resource relationship or only reflect a synthetic workflow pattern.
+The challenge states that reported statuses and operation results are claims, not proof of actual deletion. They must not be used as proof of compliant resource state.
+If workflow metadata is used as a linkage clue, document why it is legitimate, what evidence corroborates it, and how the solution behaves when the signal is absent or misleading.
+Measure how many output steps and final predictions rely on this heuristic. Compare the results with a version using only independently corroborated identity/resource links.
+Specific requirement: snapshot-order tie-breaking
+Treat `snapshot_order` as low-confidence unless there is independent evidence supporting that association.
+Measure its impact on the public samples and full evaluation output. Explore whether cross-system relationships, record-level fields, or other evidence can resolve the ambiguity.
+Never exploit case numbering or hardcode generator-specific case families.
+If a genuine ambiguity remains, preserve it in diagnostics. Do not silently turn a tie into a high-confidence fact.
+4. Investigate the three reportedly missing reference records
+Locate the exact three records or references the previous report says cannot be found.
+For each one:
+
+1. Identify the affected public case and expected sample step.
+2. Search all relevant participant-facing CSVs and evidence files.
+3. Verify the coverage and extraction results of the relevant parser.
+4. Check whether the item appears under an alternate resource ID, historical identifier, nested JSON field, SQL table, linked trace, screenshot, or document reference.
+5. Confirm the audit-time cutoff and applicable policy.
+6. Determine whether the record is genuinely unsupported by the supplied evidence or was missed by the implementation.
+
+If it is genuinely impossible to identify the record, document the limitation. Do not invent an evidence reference or resource ID.
+5. Resolve the screenshot/catalog conflict
+Investigate the reported `case_63` conflict where the data catalog links `marketing_001` to the requester, while the screenshot apparently names another person.
+Inspect the actual screenshot, data-catalog record, associated activity, manifest metadata, and other corroborating evidence.
+Determine whether:
+
+* The screenshot shows a decoy or different record.
+* The catalog entry is authoritative and corroborated.
+* Identity resolution or OCR has failed.
+* The available evidence is genuinely contradictory.
+
+Do not automatically prefer the catalog or screenshot merely because one is easier to parse. Record the evidence supporting the final decision and add a regression test for the resolved behavior.
+6. Challenge unsupported default assumptions
+Audit these assumptions explicitly.
+Backups: A missing visible restore-block indicator does not automatically prove that restoration is allowed. Establish whether the evidence positively indicates `restore_allowed`, eligibility, an active restore path, or another contract-supported condition. Check the evidence scope and the meaning of missing fields.
+Connectors: Confirm that an enabled or streaming status is actually supported by the supplied evidence, applies to the subject's data, and was in effect at `audit_at`.
+Absence: An omitted record or empty result proves absence only if the relevant evidence is complete and properly scoped. Validate snapshot scopes, query filters, error states, and parser completeness.
+Security retention: Recheck the rule for security records whose retention period has expired. Distinguish the supplied rules from inferred behavior. Verify all available public examples and policy conditions.
+Hash-only analytics: Recheck when an analytics/contact record should be deleted, anonymized, or otherwise treated under `deletion_rules.csv`. Determine whether its actual category and policy condition justify deletion.
+Evidence freshness: Apply the formal cutoff rules to both observations and evidence citations. Explicitly investigate the reported conflict involving a log captured after `audit_at` whose internal event timestamps predate the cutoff. Compare the specification with the public reference answer. Do not silently generalise a sample-specific exception to the rest of the dataset.
+For every assumption, label it as an explicit requirement, evidence-supported inference, low-confidence heuristic, or unresolved ambiguity.
+7. Improve confidence and diagnostics without changing the output contract
+Add or improve diagnostics so each case can be investigated without reading every parser and planner function.
+For every case, make it possible to inspect:
+
+* Resolved subject and identity-link basis.
+* Candidate resource matches and confidence category.
+* Relevant evidence files and timestamps.
+* Observed resource state at `audit_at`.
+* Applied deletion rules.
+* Findings, remediation, and verification steps.
+* Unresolved evidence or conflicting observations.
+* Whether a prediction relies on a weak heuristic.
+
+Keep these diagnostics outside `output.csv`. Do not add unsupported fields to the required output schema.
+Add a summary that quantifies weakly inferred assignments, unresolved ties, parser limitations, evidence coverage, and the proportion of output steps relying on heuristics.
+Do not attempt to manufacture confidence scores unless they have a defined and defensible meaning.
+8. Validate generalisation, not just public-sample memorisation
+Retain the 32 public cases as a regression suite, but do not optimise them through case-specific production logic.
+Expand the custom tests to cover, at minimum:
+
+* Historical identifiers and a look-alike decoy.
+* Post-audit resource recreation.
+* Replica drift.
+* Multilingual non-deletion intent.
+* A tombstone containing prohibited PII.
+* An active connector and restorable backup.
+* Conflicting identity evidence.
+* A partial snapshot that cannot establish absence.
+* An evidence file captured after the audit cutoff.
+* An ambiguous resource assignment.
+
+Use independent expected results for the custom fixtures and explain how the expected behavior follows from the contract. Do not claim that self-authored tests establish hidden-answer accuracy.
+Add tests specifically for timestamp handling, identity-link uniqueness, evidence-reference validity, and ordering.
+Compare the old and improved implementations on the same tests. Explain which improvements are robust and which depend on heuristic assumptions.
+9. Regenerate and independently validate the complete submission
+After implementing justified changes:
+
+1. Run all unit and regression tests.
+2. Run the public sample evaluation.
+3. Run the expanded custom suite.
+4. Regenerate the full 518-case `output.csv`.
+5. Run the independent output validator.
+6. Confirm case coverage, status validity, JSON schema, evidence validity, timestamp rules, operation/state pairs, and exact ordering.
+7. Update the evaluation and usage reports with measured, honest results.
+8. Rebuild `code.zip` using the official submission rules.
+9. Extract it into a clean scratch directory and run the packaged implementation.
+10. Verify that the packaged run produces the expected output and that no dataset, secrets, nested archives, or prohibited caches are included.
+11. Verify that all required `log.txt` entries are valid and append the final turn as instructed.
+
+Preserve the required report paths and any necessary archive copies described by the repository instructions. Use the actual runtime model and tool identifiers in the log; never guess them.
+10. Final report
+Provide a concise but evidence-backed final report containing:
+
+* Baseline versus improved metrics.
+* All previously mismatched public cases and their resolution.
+* Every previously ambiguous identity assignment: resolved, still ambiguous, or unsupported.
+* The status of the three reportedly missing reference records.
+* Findings from the screenshot/catalog and post-cutoff conflicts.
+* The effect of removing or restricting weak heuristics.
+* Evidence/parser coverage and remaining limitations.
+* Final row count, validation results, test results, and reproducibility check.
+* The final artifact inventory and exact reproduction commands.
+* Any decision that still requires my review before submission.
+
+Do not fabricate accuracy, independent validation, or proof of correctness. If a real ambiguity cannot be eliminated using available data, state the limitation plainly.
+Start by auditing the existing implementation and its baseline. Then improve the actual causes of errors and complete the end-to-end verification.
+
+Agent Response Summary:
+Re-ran the baseline: output SHA-256 1fc4a7fe..., public sample exact 0.8438 and F1 0.9817. The baseline implementation was preserved from code.zip for old-vs-new comparisons.
+
+Second-pass changes:
+- Every link now carries a defined confidence class (direct/strong/weak/unresolved) with candidates and method.
+- New weak resolvers: learned run cadence (390/449 s) and evidence-coverage consistency.
+- Query-type exports can no longer prove absence; an override needs an audit-time capture.
+- Catalog links are rejected only when the record shows another known customer; case_63 is kept and flagged.
+- Screenshot flags require positive indicators; glued OCR identifiers are split.
+- Bundle order is opt-in; the default link policy is now no-guess, so genuine ties are never asserted.
+- Added per-case diagnostics and a summary; the custom suites grew to 12 cases; tests grew to 31.
+
+Results:
+- Public sample: exact 0.8750, F1 0.9895, precision 1.0.
+- The three missing records were confirmed absent from participant data.
+- All 508 deletion statuses depend only on direct links (0 status changes vs baseline).
+- Final output: dd65f880..., VALID; the clean-extraction run reproduced it; code.zip rebuilt.
+
+Actions:
+* Re-ran main.py, validate_output.py, evaluation (sample, custom), unittest; extracted baseline code.zip to scratchpad for comparison
+* Exhaustive search for account_004 / audit_record_6645 / audit_record_5569 across CSVs, SQL, JSON, logs, PDF text, OCR text
+* Viewed marketing_profile_console.png; inspected catalog row activity_4008 and identities
+* Edited code/ghost_audit/{linker,state,planner,pipeline,evidence/model,evidence/parsers}.py, code/main.py, code/evaluation/main.py; added code/ghost_audit/diagnostics.py
+* Added code/tests/test_second_pass.py (16 tests); extended code/evaluation/custom_cases/build_custom_cases.py (suite + suite_ambiguous)
+* Rewrote code/evaluation/evaluation_report.md; updated usage_report.md, README.md; generated code/evaluation/diagnostics_summary.md
+* Regenerated output.csv (dd65f880...), validated, rebuilt code.zip (75 files), verified a clean-extraction run
+
+Context:
+tool=Claude Code
+model=claude-opus-5-5
+branch=unknown (not a git repository)
+repo_root=C:\Users\heman\Dropbox\PC\Desktop\Programming 19\Hackathon-build-AI-agent
+worktree=main
+parent_agent=none
+
+## [2026-10-24T20:47:34Z] Confirm no-guess link policy for submission
+
+User Prompt (verbatim, secrets redacted):
+Keep the default no-guess policy for the submitted output.csv.
+
+Agent Response Summary:
+Confirmed the submitted artifacts already use the default no-guess link policy, so no regeneration was needed. Verified output.csv (SHA-256 dd65f880...) is unchanged and passes the validator, and that code.zip (SHA-256 4a35a0ad...) contains run telemetry recording link_policy no-guess.
+
+Actions:
+* Ran sha256sum on output.csv and code.zip; ran python code/validate_output.py
+* Checked code/evaluation/last_run_usage.json in the repo and inside code.zip
+* Appended this entry to log.txt
+
+Context:
+tool=Claude Code
+model=claude-opus-5-5
+branch=unknown (not a git repository)
+repo_root=C:\Users\heman\Dropbox\PC\Desktop\Programming 19\Hackathon-build-AI-agent
+worktree=main
+parent_agent=none

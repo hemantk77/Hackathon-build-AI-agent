@@ -2,6 +2,7 @@
   "requests_file": "deletion_requests.csv",
   "cases": 518,
   "llm_enabled": false,
+  "link_policy": "no-guess",
   "model_calls": 0,
   "per_model": {},
   "calls": []

@@ -98,11 +98,13 @@ def score(pred: dict, gold: dict) -> dict:
     }
 
 
-def run_and_score(data_dir: Path, requests: str, gold_path: Path, verbose: bool) -> dict:
+def run_and_score(data_dir: Path, requests: str, gold_path: Path, verbose: bool, link_policy: str | None = None) -> dict:
     from ghost_audit.output import write_output
     from ghost_audit.pipeline import run_pipeline
 
-    run = run_pipeline(data_dir, requests)
+    from ghost_audit.pipeline import DEFAULT_LINK_POLICY
+
+    run = run_pipeline(data_dir, requests, link_policy=link_policy or DEFAULT_LINK_POLICY)
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "pred.csv"
         write_output(out, [(r.case_id, r.status, r.steps) for r in run.results])
@@ -117,7 +119,9 @@ def run_and_score(data_dir: Path, requests: str, gold_path: Path, verbose: bool)
                 for e in info["extra"]:
                     print("    extra  ", e)
                 for res in diag[cid].resources:
-                    print("    res", res)
+                    st = res["state_at_audit"]
+                    print(f"    res {res['resource_id']:<20} {res['link']['confidence']:<10} {res['link']['method']:<40} "
+                          f"{res['policy']['treatment']:<13} compliant={st['compliant']} cite={st['citation']}")
     return result
 
 
@@ -135,6 +139,8 @@ def main(argv=None) -> int:
     ap.add_argument("--custom", action="store_true")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--json", help="write metrics JSON here")
+    ap.add_argument("--link-policy", default=None, choices=["no-guess", "full", "corroborated"],
+                    help="link policy for pipeline runs (default: the production default)")
     args = ap.parse_args(argv)
 
     repo = CODE_DIR.parent
@@ -145,13 +151,18 @@ def main(argv=None) -> int:
     elif args.custom:
         root = Path(__file__).resolve().parent / "custom_cases"
         for case_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            policy_file = case_dir / "link_policy.txt"
+            from ghost_audit.pipeline import DEFAULT_LINK_POLICY
+
+            policy = (policy_file.read_text(encoding="utf-8").strip() if policy_file.exists()
+                      else args.link_policy or DEFAULT_LINK_POLICY)
             res = run_and_score(case_dir / "dataset", "deletion_requests.csv", case_dir / "expected_output.csv",
-                                args.verbose)
+                                args.verbose, policy)
             results[case_dir.name] = res
-            print_summary(case_dir.name, res)
+            print_summary(f"{case_dir.name} (link policy {policy})", res)
     else:
         res = run_and_score(repo / "dataset", "sample_deletion_requests.csv", repo / "dataset" / "sample_output.csv",
-                            args.verbose)
+                            args.verbose, args.link_policy)
         results["public_sample"] = res
         print_summary("public sample", res)
     if args.json:

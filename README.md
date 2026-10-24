@@ -39,8 +39,11 @@ Useful flags:
 | Command | Purpose |
 |---|---|
 | `python code/main.py --requests sample_deletion_requests.csv --out sample_predictions.csv` | Audit another request file in `dataset/` |
-| `python code/main.py --diagnostics diag.json` | Per-case resources, link basis, policy treatment, state and citation |
-| `python code/main.py --data-dir <dir>` | Run against another dataset with the same layout (used by the custom suite) |
+| `python code/main.py --diagnostics diag.json` | Per case: subject resolution, authorization cues, every linked resource with its link confidence/method/candidates, policy rule, state at `audit_at` with the evidence trail, citation, and notes |
+| `python code/main.py --summary summary.md` | Run summary: link confidence counts, share of steps on heuristics, workflow-event outcomes, omission/late-file states, catalog conflicts, coverage |
+| `python code/main.py --link-policy {no-guess,full,corroborated}` | Which link confidence classes may produce steps. Default `no-guess` never asserts a genuine tie; `full` also pairs ties deterministically; `corroborated` keeps only direct and strong links |
+| `python code/main.py --use-bundle-order` | Also break ties by record order inside snapshot bundles (weak; off by default) |
+| `python code/main.py --data-dir <dir>` | Run against another dataset with the same layout (used by the custom suites) |
 | `python code/evaluation/main.py --verbose` | Per-case missing/extra steps against the reference answers |
 | `python code/evaluation/custom_cases/build_custom_cases.py` | Rebuild the custom adversarial fixtures |
 | `python code/package_submission.py` | Build `code.zip` (excludes `dataset/`, caches, secrets, nested archives) |
@@ -71,13 +74,15 @@ code/
     state.py                 state at audit_at, replica drift, absence by omission, citation choice
     planner.py               findings -> remediation -> verification; COMPLETE vs INCOMPLETE
     output.py                grader ordering (phase, operation table order, system_id, resource_id) and CSV
+    diagnostics.py           per-case diagnostics and the run summary (kept outside output.csv)
     llm.py, prompts.md       optional Claude fallback (off by default)
-  tests/test_components.py   15 unit tests
+  tests/                     31 unit tests (test_components.py, test_second_pass.py)
   evaluation/
     main.py                  scorer (status, exact-case, step P/R/F1, field, sequence, LCS)
-    custom_cases/            5 hand-labelled adversarial cases (+ builder script)
-    evaluation_report.md     metrics, custom cases, failures and fixes
+    custom_cases/            12 hand-labelled cases in two suites (+ builder script)
+    evaluation_report.md     metrics, mismatch analysis, ambiguity audit, assumptions, failures and fixes
     usage_report.md          model and token usage of the final run
+    diagnostics_summary.md   generated summary of the final run
 ```
 
 ### Pipeline
@@ -94,18 +99,30 @@ code/
 
 3. **Identity.** The request email (case-insensitive, current or historical) resolves to exactly one `user_id`. Linking uses only exact normalized strong keys: emails, email hashes (including historical hashes), phones, and `user_N`. Names never link on their own, so look-alikes such as `*.jr@` addresses never match.
 
-4. **Resource discovery** (`linker.py`), strongest basis first:
-   - **evidence:** an observation carrying one of the subject's identifiers, with observation time in `[requested_at, audit_at]`. Log `trace_id`s carry the lookup key from the `*_started` line to the `*_completed` line.
-   - **catalog / document:** `LINK_RESOURCE_IDENTITY` rows, plus PDFs/screenshots captured within a day of the catalog row that display its reference. A screenshot row needs a direct identifier on that row to link a record.
-   - **workflow:** deletion-worker events are emitted in each request's reporting slot. Primary-account submissions occur about 1h before `reported_at`, and their result mirrors `reported_status` (SUCCESS↔COMPLETE, PARTIAL↔PARTIALLY_COMPLETE, FAILED↔NOT_STARTED). Successful policy actions land about 0.5h before and follow-ups 0.5–2h after. Events are assigned by global constraint elimination across all 550 requests: one resource per system per request, and never a resource already tied to another subject.
-   - **alignment:** remaining ties are narrowed by record order inside snapshot bundles. The bundles list every collection in a consistent subject order, which was verified on every bundle.
-   - **tie_guess:** a still-tied primary account (each request has exactly one), or a perfect matching of indistinguishable events, is paired deterministically and flagged in diagnostics.
+4. **Resource discovery** (`linker.py`). Every link carries a confidence class:
+   - **direct:**
+     - an observation carrying one of the subject's identifiers, observed within `[requested_at, audit_at]`; log `trace_id`s carry the lookup key from the `*_started` line to the `*_completed` line;
+     - or a `LINK_RESOURCE_IDENTITY` catalog row / document row naming the subject.
+
+     A catalog row is rejected when the record itself shows another *known* customer's identifiers. When those identifiers match nobody, the row is kept but flagged as a conflict.
+   - **strong:** a deletion-worker event that is unique to one request's reporting slot and also present in that request's audit-time evidence.
+   - **weak:** other workflow inferences:
+     - exclusivity propagation;
+     - learned run cadence (consecutive actions of one run are 390 s or 449 s apart);
+     - clean-run filter;
+     - evidence-coverage consistency for account ties.
+
+     The deletion worker emits its events in each request's reporting slot, and the primary-account result mirrors `reported_status`. These are used only as linkage clues, never as evidence of state.
+   - **unresolved:** genuine ties. They are recorded in diagnostics and, under the default `no-guess` policy, never written to `output.csv`.
+
+   In the final run every deletion status depends only on direct links. Removing all workflow inference (`--link-policy corroborated`) changes 0 statuses.
 
 5. **State at `audit_at`.**
    - The latest observation at or before the cutoff decides the state.
    - At one snapshot instant, any surviving replica copy is a violation (replication drift).
-   - The audit-time capture of the account store overrides an older contradicting observation.
+   - Absence by omission is accepted only from snapshot captures, never from query-style lookups. A capture may override an explicit "present" only when it was taken for this audit (within 30h).
    - Later evidence (for example an account recreated after the audit) never changes the answer.
+   - A line timestamped before the cutoff inside a file exported after it may link records and inform state, but is never cited.
 
 6. **Policy.** Categories map to `deletion_rules.csv`:
 
@@ -131,10 +148,15 @@ code/
 
 | Evaluation set | Status acc. | Exact case | Step P / R / F1 | Field acc. | Sequence acc. |
 |---|---|---|---|---|---|
-| Public sample (32 cases) | 1.000 | 0.844 | 0.990 / 0.974 / 0.982 | 0.967 | 0.844 |
-| Custom adversarial suite (5 cases) | 1.000 | 1.000 | 1.000 / 1.000 / 1.000 | 1.000 | 1.000 |
+| Public sample (32), default `no-guess` | 1.000 | 0.875 | 1.000 / 0.979 / 0.990 | 0.958 | 0.875 |
+| Public sample (32), `--link-policy full` | 1.000 | 0.875 | 0.995 / 0.979 / 0.987 | 0.968 | 0.875 |
+| Public sample, first-pass baseline | 1.000 | 0.844 | 0.990 / 0.974 / 0.982 | 0.967 | 0.844 |
+| Custom suites (12 hand-labelled cases) | 1.000 | 1.000 | 1.000 / 1.000 / 1.000 | 1.000 | 1.000 |
 
-The full 518-case output passes the independent validator. It is byte-identical across runs and splits into 153 `COMPLETE`, 355 `INCOMPLETE` and 10 `NOT_APPLICABLE`.
+Full 518-case output:
+- passes the independent validator and is byte-identical across runs;
+- 153 `COMPLETE`, 355 `INCOMPLETE`, 10 `NOT_APPLICABLE`;
+- 3,127 steps, of which 6.9% rest on weak (heuristic) links and none on unresolved ties.
 
 Hidden-answer accuracy is **unknown**: no hidden labels were used or available. Details, ablations and the defect log are in [`code/evaluation/evaluation_report.md`](./code/evaluation/evaluation_report.md).
 
@@ -146,10 +168,12 @@ In the final run every request was classified confidently, so no call was made. 
 
 ## Limitations
 
-- About 3% of reference resources in the public sample appear nowhere in participant data, for example two security audit records and one hand-crafted account. They cannot be recovered.
-- Some workflow events cannot be told apart from evidence: same slot, same result, no identifiers. Account ties (105) and perfect-matching analytics ties (36) are resolved by a deterministic guess, which is right about half the time on true ties. They are flagged as `tie_guess` in `--diagnostics`.
-- Screenshot evidence relies on OCR. The text cache for the supplied images is shipped and was checked against the catalog rows and by visual inspection.
-- `marketing_001` (case_63) is linked by the data catalog to the requester, but the screenshot shows another person's name. The catalog link was followed; this is a judgment call that needs manual review.
+- **Missing references.** Three public reference records (`account_004`, `audit_record_6645`, `audit_record_5569`) appear nowhere in participant data, so they cannot be recovered.
+- **Genuine ties.** 97 account events and 24 analytics events in the eval set cannot be attributed: same slot, same result, no identifiers. Seven more are unassignable.
+  - Under the default, these are not asserted, and each affected case lacks one verification step.
+  - `--link-policy full` pairs them deterministically, which is right about 33–50% of the time per tie.
+- **OCR.** Screenshot evidence relies on OCR. The text cache for the supplied images is shipped and was checked against the catalog rows and by visual inspection.
+- **case_63.** The data catalog links `marketing_001` to the requester, but the screenshot shows an unknown person's identifiers. The uncontradicted catalog link is kept and flagged; this needs manual review.
 
 ## Challenge links
 
